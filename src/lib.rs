@@ -45,6 +45,14 @@ impl Vfs {
     pub fn set_file(&self, path: &Path, text: &str) {
         self.0.set_file(path, text)
     }
+
+    pub fn load_file(&self, path: &Path) {
+        self.0.load_file(path)
+    }
+
+    pub fn get_line(&self, path: &Path, line: usize) -> Option<String> {
+        self.0.get_line(path, line)
+    }
 }
 
 struct VfsInternal<T> {
@@ -66,6 +74,12 @@ impl<T: FileLoader> VfsInternal<T> {
         }
     }
 
+    fn load_file(&self, path: &Path) {
+        let file = T::read(path).unwrap();
+        let mut files = self.files.lock().unwrap();
+        files.insert(path.to_path_buf(), file);
+    }
+
     fn on_save(&self, file_name: &str) {
         let mut files = self.files.lock().unwrap();
         files.remove(Path::new(file_name));
@@ -81,7 +95,7 @@ impl<T: FileLoader> VfsInternal<T> {
                     return;
                 }
             }
-            
+
             let mut file = T::read(Path::new(path)).unwrap();
             file.make_change(&changes);
 
@@ -117,6 +131,12 @@ impl<T: FileLoader> VfsInternal<T> {
             result.entry(&*c.span.file_name).or_insert(vec![]).push(c);
         }
         result
+    }
+
+    fn get_line(&self, path: &Path, line: usize) -> Option<String> {
+        self.load_file(path);
+        let files = self.files.lock().unwrap();
+        files.get(path).map(|f| f.get_line(line).to_string())
     }
 }
 
