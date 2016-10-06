@@ -17,8 +17,8 @@ pub struct Vfs(VfsInternal<RealFileLoader>);
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Change {
-    span: Span,
-    text: String,
+    pub span: Span,
+    pub text: String,
 }
 
 impl Vfs {
@@ -46,10 +46,6 @@ impl Vfs {
         self.0.set_file(path, text)
     }
 
-    pub fn load_file(&self, path: &Path) {
-        self.0.load_file(path)
-    }
-
     pub fn get_line(&self, path: &Path, line: usize) -> Option<String> {
         self.0.get_line(path, line)
     }
@@ -72,12 +68,6 @@ impl<T: FileLoader> VfsInternal<T> {
             files: Mutex::new(HashMap::new()),
             loader: PhantomData,
         }
-    }
-
-    fn load_file(&self, path: &Path) {
-        let file = T::read(path).unwrap();
-        let mut files = self.files.lock().unwrap();
-        files.insert(path.to_path_buf(), file);
     }
 
     fn on_save(&self, file_name: &str) {
@@ -134,8 +124,11 @@ impl<T: FileLoader> VfsInternal<T> {
     }
 
     fn get_line(&self, path: &Path, line: usize) -> Option<String> {
-        self.load_file(path);
-        let files = self.files.lock().unwrap();
+        let mut files = self.files.lock().unwrap();
+        if !files.contains_key(path) {
+            let file = T::read(path).unwrap();
+            files.insert(path.to_path_buf(), file);
+        }
         files.get(path).map(|f| f.get_line(line).to_string())
     }
 }
