@@ -31,6 +31,8 @@ pub struct Change {
     pub text: String,
 }
 
+// TODO when should we return Option/Result vs panic
+
 impl Vfs {
     pub fn new() -> Vfs {
         Vfs(VfsInternal::<RealFileLoader>::new())
@@ -45,6 +47,7 @@ impl Vfs {
         self.0.on_change(changes)
     }
 
+    // TODO kind of bogus - returns unchanged files too
     pub fn get_changed_files(&self) -> HashMap<PathBuf, String> {
         self.0.get_changed_files()
     }
@@ -59,6 +62,10 @@ impl Vfs {
 
     pub fn set_file(&self, path: &Path, text: &str) {
         self.0.set_file(path, text)
+    }
+
+    pub fn get_file(&self, path: &Path) -> Option<String> {
+        self.0.get_file(path)
     }
 
     pub fn get_line(&self, path: &Path, line: usize) -> Option<String> {
@@ -149,6 +156,13 @@ impl<T: FileLoader> VfsInternal<T> {
         Self::ensure_file(&mut files, path);
 
         files.get(path).and_then(|file| file.get_line(line).map(|s| s.to_owned()))
+    }
+
+    fn get_file(&self, path: &Path) -> Option<String> {
+        let mut files = self.files.lock().unwrap();
+        Self::ensure_file(&mut files, path);
+
+        files.get(path).map(|file| file.text.clone())
     }
 
     fn ensure_file(files: &mut HashMap<PathBuf, File>, path: &Path) {
@@ -304,11 +318,14 @@ mod test {
         let changes = vfs.get_changed_files();
         assert!(changes.len() == 1);
         assert!(changes[&PathBuf::from("foo")] == "foo\nHfooo\nWorld\nHello, World!\n");
+        assert!(vfs.get_file(&Path::new("foo")) == Some("foo\nHfooo\nWorld\nHello, World!\n".to_owned()));
+        assert!(vfs.get_file(&Path::new("bar")) == Some("bar\nHello\nWorld\nHello, World!\n".to_owned()));
 
         vfs.on_change(&[make_change_2()]);
         let changes = vfs.get_changed_files();
         assert!(changes.len() == 1);
         assert!(changes[&PathBuf::from("foo")] == "foo\nHfooo\nWorlaye carumballo, World!\n");
+        assert!(vfs.get_file(&Path::new("foo")) == Some("foo\nHfooo\nWorlaye carumballo, World!\n".to_owned()));
     }
 
     // TODO test with wide chars
