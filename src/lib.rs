@@ -129,7 +129,18 @@ impl<T: FileLoader> VfsInternal<T> {
             let file = T::read(path).unwrap();
             files.insert(path.to_path_buf(), file);
         }
-        files.get(path).map(|f| f.get_line(line).to_string())
+
+        match files.get(path) {
+            Some(s) => {
+                match s.get_line(line) {
+                    Some (v) => {
+                        Some(v.to_string())
+                    }
+                    None => None
+                }
+            }
+            None => None
+        }
     }
 }
 
@@ -147,10 +158,11 @@ impl File {
     fn make_change(&mut self, changes: &[&Change]) {
         for c in changes {
             let range = {
-                let first_line = self.get_line(c.span.line_start);
+                let first_line = self.get_line(c.span.line_start).unwrap();
+                let last_line = self.get_line(c.span.line_end).unwrap();
+
                 let byte_start = self.line_indices[c.span.line_start] +
                                  byte_in_str(first_line, c.span.column_start).unwrap() as u32;
-                let last_line = self.get_line(c.span.line_end);
                 let byte_end = self.line_indices[c.span.line_end] +
                                byte_in_str(last_line, c.span.column_end).unwrap() as u32;
                 (byte_start, byte_end)
@@ -163,10 +175,16 @@ impl File {
         }
     }
 
-    fn get_line(&self, line: usize) -> &str {
+    fn get_line(&self, line: usize) -> Option<&str> {
+        if self.line_indices.len() <= (line + 1) {
+            return None;
+        }
         let start = self.line_indices[line];
         let end = self.line_indices[line + 1];
-        &self.text[start as usize ..end as usize]
+        if self.text.len() <= (end as usize) {
+            return None;
+        }
+        Some(&self.text[start as usize ..end as usize])
     }
 }
 
