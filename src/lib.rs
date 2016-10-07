@@ -17,8 +17,8 @@ pub struct Vfs(VfsInternal<RealFileLoader>);
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Change {
-    span: Span,
-    text: String,
+    pub span: Span,
+    pub text: String,
 }
 
 impl Vfs {
@@ -44,6 +44,10 @@ impl Vfs {
 
     pub fn set_file(&self, path: &Path, text: &str) {
         self.0.set_file(path, text)
+    }
+
+    pub fn get_line(&self, path: &Path, line: usize) -> Option<String> {
+        self.0.get_line(path, line)
     }
 }
 
@@ -81,7 +85,7 @@ impl<T: FileLoader> VfsInternal<T> {
                     return;
                 }
             }
-            
+
             let mut file = T::read(Path::new(path)).unwrap();
             file.make_change(&changes);
 
@@ -118,6 +122,26 @@ impl<T: FileLoader> VfsInternal<T> {
         }
         result
     }
+
+    fn get_line(&self, path: &Path, line: usize) -> Option<String> {
+        let mut files = self.files.lock().unwrap();
+        if !files.contains_key(path) {
+            let file = T::read(path).unwrap();
+            files.insert(path.to_path_buf(), file);
+        }
+
+        match files.get(path) {
+            Some(s) => {
+                match s.get_line(line) {
+                    Some (v) => {
+                        Some(v.to_string())
+                    }
+                    None => None
+                }
+            }
+            None => None
+        }
+    }
 }
 
 impl File {
@@ -134,10 +158,11 @@ impl File {
     fn make_change(&mut self, changes: &[&Change]) {
         for c in changes {
             let range = {
-                let first_line = self.get_line(c.span.line_start);
+                let first_line = self.get_line(c.span.line_start).unwrap();
+                let last_line = self.get_line(c.span.line_end).unwrap();
+
                 let byte_start = self.line_indices[c.span.line_start] +
                                  byte_in_str(first_line, c.span.column_start).unwrap() as u32;
-                let last_line = self.get_line(c.span.line_end);
                 let byte_end = self.line_indices[c.span.line_end] +
                                byte_in_str(last_line, c.span.column_end).unwrap() as u32;
                 (byte_start, byte_end)
@@ -150,10 +175,16 @@ impl File {
         }
     }
 
-    fn get_line(&self, line: usize) -> &str {
+    fn get_line(&self, line: usize) -> Option<&str> {
+        if self.line_indices.len() <= (line + 1) {
+            return None;
+        }
         let start = self.line_indices[line];
         let end = self.line_indices[line + 1];
-        &self.text[start as usize ..end as usize]
+        if self.text.len() <= (end as usize) {
+            return None;
+        }
+        Some(&self.text[start as usize ..end as usize])
     }
 }
 
