@@ -1,7 +1,8 @@
-#![feature(custom_derive, plugin)]
+#![feature(rustc_macro)]
 
-#![plugin(serde_macros)]
 extern crate rls_analysis;
+#[macro_use]
+extern crate serde_derive;
 
 use rls_analysis::Span;
 
@@ -12,6 +13,15 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+// My kingdom for ?/Option support
+macro_rules! try_opt {
+    ($e:expr) => {
+        match $e {
+            Some(e) => e,
+            None => return None,
+        }
+    }
+}
 
 pub struct Vfs(VfsInternal<RealFileLoader>);
 
@@ -26,6 +36,7 @@ impl Vfs {
         Vfs(VfsInternal::<RealFileLoader>::new())
     }
 
+    // TODO should take a Path
     pub fn on_save(&self, file_name: &str) {
         self.0.on_save(file_name)
     }
@@ -40,6 +51,10 @@ impl Vfs {
 
     pub fn get_file_changes(&self, path: &Path) -> Option<String> {
         self.0.get_file_changes(path)
+    }
+
+    pub fn has_changes(&self) -> bool {
+        self.0.has_changes()
     }
 
     pub fn set_file(&self, path: &Path, text: &str) {
@@ -57,7 +72,7 @@ struct VfsInternal<T> {
 }
 
 struct File {
-    // TODO should use a rope.
+    // FIXME(https://github.com/jonathandturner/rustls/issues/21) should use a rope.
     text: String,
     line_indices: Vec<u32>,
 }
@@ -114,6 +129,12 @@ impl<T: FileLoader> VfsInternal<T> {
         files.get(path).map(|f| f.text.clone())
     }
 
+    fn has_changes(&self) -> bool {
+        let files = self.files.lock().unwrap();
+        // TODO bogus - could contain unchanged files
+        files.len() != 0        
+    }
+
     fn coalesce_changes<'a>(changes: &'a [Change]) -> HashMap<&'a str, Vec<&'a Change>> {
         // Note that for any given file, we preserve the order of the changes.
         let mut result = HashMap::new();
@@ -125,21 +146,15 @@ impl<T: FileLoader> VfsInternal<T> {
 
     fn get_line(&self, path: &Path, line: usize) -> Option<String> {
         let mut files = self.files.lock().unwrap();
+        Self::ensure_file(&mut files, path);
+
+        files.get(path).and_then(|file| file.get_line(line).map(|s| s.to_owned()))
+    }
+
+    fn ensure_file(files: &mut HashMap<PathBuf, File>, path: &Path) {
         if !files.contains_key(path) {
             let file = T::read(path).unwrap();
             files.insert(path.to_path_buf(), file);
-        }
-
-        match files.get(path) {
-            Some(s) => {
-                match s.get_line(line) {
-                    Some (v) => {
-                        Some(v.to_string())
-                    }
-                    None => None
-                }
-            }
-            None => None
         }
     }
 }
@@ -176,15 +191,14 @@ impl File {
     }
 
     fn get_line(&self, line: usize) -> Option<&str> {
-        if self.line_indices.len() <= (line + 1) {
-            return None;
+        let start = *try_opt!(self.line_indices.get(line));
+        let end = *try_opt!(self.line_indices.get(line + 1));
+
+        if (end as usize) <= self.text.len() && start <= end {
+            Some(&self.text[start as usize .. end as usize])
+        } else {
+            None
         }
-        let start = self.line_indices[line];
-        let end = self.line_indices[line + 1];
-        if self.text.len() <= (end as usize) {
-            return None;
-        }
-        Some(&self.text[start as usize ..end as usize])
     }
 }
 
@@ -227,8 +241,8 @@ impl FileLoader for RealFileLoader {
 #[cfg(test)]
 mod test {
     use super::{VfsInternal, Change, FileLoader, File};
-    use analysis::Span;
-    use std::path::Path;
+    use rls_analysis::Span;
+    use std::path::{Path, PathBuf};
 
     struct MockFileLoader;
 
@@ -289,14 +303,12 @@ mod test {
         vfs.on_change(&[make_change()]);
         let changes = vfs.get_changed_files();
         assert!(changes.len() == 1);
-        assert!(changes[0].0.display().to_string() == "foo");
-        assert!(changes[0].1 == "foo\nHfooo\nWorld\nHello, World!\n");
+        assert!(changes[&PathBuf::from("foo")] == "foo\nHfooo\nWorld\nHello, World!\n");
 
         vfs.on_change(&[make_change_2()]);
         let changes = vfs.get_changed_files();
         assert!(changes.len() == 1);
-        assert!(changes[0].0.display().to_string() == "foo");
-        assert!(changes[0].1 == "foo\nHfooo\nWorlaye carumballo, World!\n");
+        assert!(changes[&PathBuf::from("foo")] == "foo\nHfooo\nWorlaye carumballo, World!\n");
     }
 
     // TODO test with wide chars
