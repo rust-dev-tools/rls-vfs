@@ -1,5 +1,4 @@
 #![feature(proc_macro)]
-#![feature(question_mark)]
 
 extern crate rls_analysis;
 #[macro_use]
@@ -23,7 +22,7 @@ macro_rules! try_opt_loc {
     }
 }
 
-pub struct Vfs(VfsInternal<RealFileLoader>);
+pub struct Vfs<U = ()>(VfsInternal<RealFileLoader, U>);
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Change {
@@ -44,12 +43,14 @@ pub enum Error {
     BadLocation,
     /// The requested file was not cached in the VFS.
     FileNotCached,
+    /// Not really an error, file is cached but there is no user data for it.
+    NoUserDataForFile,
 }
 
-impl Vfs {
+impl<U> Vfs<U> {
     /// Creates a new, empty VFS.
-    pub fn new() -> Vfs {
-        Vfs(VfsInternal::<RealFileLoader>::new())
+    pub fn new() -> Vfs<U> {
+        Vfs(VfsInternal::<RealFileLoader, U>::new())
     }
 
     /// Indicate that the current file as known to the VFS has been written to
@@ -102,22 +103,40 @@ impl Vfs {
     pub fn write_file(&self, path: &Path) -> Result<(), Error> {
         self.0.write_file(path)
     }
+
+    pub fn set_user_data(&self, path: &Path, data: Option<U>) -> Result<(), Error> {
+        self.0.set_user_data(path, data)
+    }
+
+    pub fn with_user_data<F, R>(&self, path: &Path, f: F) -> R
+        where F: FnOnce(Result<&U, Error>) -> R
+    {
+        self.0.with_user_data(path, f)
+    }
+
+    // If f returns NoUserDataForFile, then the user data for the given file is erased.
+    pub fn compute_user_data<F>(&self, path: &Path, f: F) -> Result<(), Error>
+        where F: FnOnce(&str) -> Result<U, Error>
+    {
+        self.0.compute_user_data(path, f)
+    }
 }
 
-struct VfsInternal<T> {
-    files: Mutex<HashMap<PathBuf, File>>,
+struct VfsInternal<T, U> {
+    files: Mutex<HashMap<PathBuf, File<U>>>,
     loader: PhantomData<T>,
 }
 
-struct File {
+struct File<U> {
     // FIXME(https://github.com/jonathandturner/rustls/issues/21) should use a rope.
     text: String,
     line_indices: Vec<u32>,
     changed: bool,
+    user_data: Option<U>,
 }
 
-impl<T: FileLoader> VfsInternal<T> {
-    fn new() -> VfsInternal<T> {
+impl<T: FileLoader, U> VfsInternal<T, U> {
+    fn new() -> VfsInternal<T, U> {
         VfsInternal {
             files: Mutex::new(HashMap::new()),
             loader: PhantomData,
@@ -170,8 +189,9 @@ impl<T: FileLoader> VfsInternal<T> {
     fn set_file(&self, path: &Path, text: &str) {
         let file = File {
             text: text.to_owned(),
-            line_indices: File::make_line_indices(text),
+            line_indices: make_line_indices(text),
             changed: true,
+            user_data: None,
         };
 
         let mut files = self.files.lock().unwrap();
@@ -207,7 +227,7 @@ impl<T: FileLoader> VfsInternal<T> {
         Ok(files[path].text.clone())
     }
 
-    fn ensure_file(files: &mut HashMap<PathBuf, File>, path: &Path) -> Result<(), Error>{
+    fn ensure_file(files: &mut HashMap<PathBuf, File<U>>, path: &Path) -> Result<(), Error>{
         if !files.contains_key(path) {
             let file = T::read(path)?;
             files.insert(path.to_path_buf(), file);
@@ -218,6 +238,54 @@ impl<T: FileLoader> VfsInternal<T> {
     // TODO
     fn write_file(&self, _path: &Path) -> Result<(), Error> {
         unimplemented!()
+    }
+
+    pub fn set_user_data(&self, path: &Path, data: Option<U>) -> Result<(), Error> {
+        let mut files = self.files.lock().unwrap();
+        match files.get_mut(path) {
+            Some(ref mut f) => {
+                f.user_data = data;
+                Ok(())
+            }
+            None => Err(Error::FileNotCached),
+        }
+    }
+
+    pub fn with_user_data<F, R>(&self, path: &Path, f: F) -> R
+        where F: FnOnce(Result<&U, Error>) -> R
+    {
+        let files = self.files.lock().unwrap();
+        let file = match files.get(path) {
+            Some(f) => f,
+            None => return f(Err(Error::FileNotCached)),
+        };
+
+        f(match file.user_data {
+            Some(ref u) => Ok(u),
+            None => Err(Error::NoUserDataForFile),
+        })
+    }
+
+    pub fn compute_user_data<F>(&self, path: &Path, f: F) -> Result<(), Error>
+        where F: FnOnce(&str) -> Result<U, Error>
+    {
+        let mut files = self.files.lock().unwrap();
+        match files.get_mut(path) {
+            Some(ref mut file) => {
+                match f(&file.text) {
+                    Ok(u) => {
+                        file.user_data = Some(u);
+                        Ok(())
+                    }
+                    Err(Error::NoUserDataForFile) => {
+                        file.user_data = None;
+                        Ok(())
+                    }
+                    Err(e) => Err(e),
+                }
+            },
+            None => Err(Error::FileNotCached),
+        }
     }
 }
 
@@ -230,17 +298,17 @@ fn coalesce_changes<'a>(changes: &'a [Change]) -> HashMap<&'a str, Vec<&'a Chang
     result
 }
 
-impl File {
-    fn make_line_indices(text: &str) -> Vec<u32> {
-        let mut result = vec![0];
-        for (i, b) in text.bytes().enumerate() {
-            if b == 0xA {
-                result.push((i + 1) as u32);
-            }
+fn make_line_indices(text: &str) -> Vec<u32> {
+    let mut result = vec![0];
+    for (i, b) in text.bytes().enumerate() {
+        if b == 0xA {
+            result.push((i + 1) as u32);
         }
-        result
     }
+    result
+}
 
+impl<U> File<U> {
     // TODO errors for unwraps
     fn make_change(&mut self, changes: &[&Change]) -> Result<(), Error> {
         for c in changes {
@@ -258,10 +326,11 @@ impl File {
             new_text.push_str(&c.text);
             new_text.push_str(&self.text[range.1 as usize..]);
             self.text = new_text;
-            self.line_indices = File::make_line_indices(&self.text);
+            self.line_indices = make_line_indices(&self.text);
         }
 
         self.changed = true;
+        self.user_data = None;
         Ok(())
     }
 
@@ -289,13 +358,13 @@ fn byte_in_str(s: &str, c: usize) -> Option<usize> {
 }
 
 trait FileLoader {
-    fn read(file_name: &Path) -> Result<File, Error>;
+    fn read<U>(file_name: &Path) -> Result<File<U>, Error>;
 }
 
 struct RealFileLoader;
 
 impl FileLoader for RealFileLoader {
-    fn read(file_name: &Path) -> Result<File, Error> {
+    fn read<U>(file_name: &Path) -> Result<File<U>, Error> {
         let mut file = match fs::File::open(file_name) {
             Ok(f) => f,
             Err(_) => return Err(Error::Io(Some(file_name.to_owned()), Some(format!("Could not open file: {}", file_name.display())))),
@@ -306,29 +375,30 @@ impl FileLoader for RealFileLoader {
         }
         let text = String::from_utf8(buf).unwrap();
         Ok(File {
-            line_indices: File::make_line_indices(&text),
+            line_indices: make_line_indices(&text),
             text: text,
             changed: false,
+            user_data: None,
         })
     }
-
 }
 
 #[cfg(test)]
 mod test {
-    use super::{VfsInternal, Change, FileLoader, File, Error};
+    use super::{VfsInternal, Change, FileLoader, File, Error, make_line_indices};
     use rls_analysis::Span;
     use std::path::{Path, PathBuf};
 
     struct MockFileLoader;
 
     impl FileLoader for MockFileLoader {
-        fn read(file_name: &Path) -> Result<File, Error> {
+        fn read<U>(file_name: &Path) -> Result<File<U>, Error> {
             let text = format!("{}\nHello\nWorld\nHello, World!\n", file_name.display());
             Ok(File {
-                line_indices: File::make_line_indices(&text),
+                line_indices: make_line_indices(&text),
                 text: text,
                 changed: false,
+                user_data: None,
             })
         }
     }
@@ -361,7 +431,7 @@ mod test {
 
     #[test]
     fn test_has_changes() {
-        let vfs = VfsInternal::<MockFileLoader>::new();
+        let vfs = VfsInternal::<MockFileLoader, ()>::new();
 
         assert!(!vfs.has_changes());
         vfs.load_file(&Path::new("foo")).unwrap();
@@ -376,7 +446,7 @@ mod test {
 
     #[test]
     fn test_cached_files() {
-        let vfs = VfsInternal::<MockFileLoader>::new();
+        let vfs = VfsInternal::<MockFileLoader, ()>::new();
         assert!(vfs.get_cached_files().is_empty());
         vfs.load_file(&Path::new("foo")).unwrap();
         vfs.load_file(&Path::new("bar")).unwrap();
@@ -388,7 +458,7 @@ mod test {
 
     #[test]
     fn test_flush_file() {
-        let vfs = VfsInternal::<MockFileLoader>::new();
+        let vfs = VfsInternal::<MockFileLoader, ()>::new();
         // Flushing an uncached-file should succeed.
         vfs.flush_file(&Path::new("foo")).unwrap();
         vfs.load_file(&Path::new("foo")).unwrap();
@@ -398,7 +468,7 @@ mod test {
 
     #[test]
     fn test_changes() {
-        let vfs = VfsInternal::<MockFileLoader>::new();
+        let vfs = VfsInternal::<MockFileLoader, ()>::new();
 
         vfs.on_changes(&[make_change()]).unwrap();
         let files = vfs.get_cached_files();
@@ -412,6 +482,69 @@ mod test {
         assert!(files.len() == 2);
         assert!(files[&PathBuf::from("foo")] == "foo\nHfooo\nWorlaye carumballo, World!\n");
         assert!(vfs.load_file(&Path::new("foo")) == Ok("foo\nHfooo\nWorlaye carumballo, World!\n".to_owned()));
+    }
+
+    #[test]
+    fn test_user_data() {
+        let vfs = VfsInternal::<MockFileLoader, i32>::new();
+
+        // New files have no user data.
+        vfs.load_file(&Path::new("foo")).unwrap();
+        vfs.with_user_data(&Path::new("foo"), |u| {
+            assert_eq!(u, Err(Error::NoUserDataForFile));
+        });
+
+        // Set and read data.
+        vfs.set_user_data(&Path::new("foo"), Some(42)).unwrap();
+        vfs.with_user_data(&Path::new("foo"), |u| {
+            assert_eq!(u, Ok(&42));
+        });
+        assert_eq!(vfs.set_user_data(&Path::new("bar"), Some(42)), Err(Error::FileNotCached));
+
+        // compute and read data.
+        vfs.compute_user_data(&Path::new("foo"), |s| {
+            assert_eq!(s, "foo\nHello\nWorld\nHello, World!\n");
+            Ok(43)
+        }).unwrap();
+        vfs.with_user_data(&Path::new("foo"), |u| {
+            assert_eq!(u, Ok(&43));
+        });
+        assert_eq!(vfs.compute_user_data(&Path::new("foo"), |_| {
+            Err(Error::BadLocation)
+        }), Err(Error::BadLocation));
+        vfs.with_user_data(&Path::new("foo"), |u| {
+            assert_eq!(u, Ok(&43));
+        });
+
+        // Clear and read data.
+        vfs.set_user_data(&Path::new("foo"), None).unwrap();
+        vfs.with_user_data(&Path::new("foo"), |u| {
+            assert_eq!(u, Err(Error::NoUserDataForFile));
+        });
+
+        // Compute (clear) and read data.
+        vfs.set_user_data(&Path::new("foo"), Some(42)).unwrap();
+        vfs.compute_user_data(&Path::new("foo"), |_| {
+            Err(Error::NoUserDataForFile)
+        }).unwrap();
+        vfs.with_user_data(&Path::new("foo"), |u| {
+            assert_eq!(u, Err(Error::NoUserDataForFile));
+        });
+
+        // Flushing a file should clear user data.
+        vfs.set_user_data(&Path::new("foo"), Some(42)).unwrap();
+        vfs.flush_file(&Path::new("foo")).unwrap();
+        vfs.load_file(&Path::new("foo")).unwrap();
+        vfs.with_user_data(&Path::new("foo"), |u| {
+            assert_eq!(u, Err(Error::NoUserDataForFile));
+        });
+
+        // Recording a change should clear user data.
+        vfs.set_user_data(&Path::new("foo"), Some(42)).unwrap();
+        vfs.on_changes(&[make_change()]).unwrap();
+        vfs.with_user_data(&Path::new("foo"), |u| {
+            assert_eq!(u, Err(Error::NoUserDataForFile));
+        });
     }
 
     // TODO test with wide chars
