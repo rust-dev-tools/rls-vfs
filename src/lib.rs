@@ -130,14 +130,6 @@ struct VfsInternal<T, U> {
     loader: PhantomData<T>,
 }
 
-struct File<U> {
-    // FIXME(https://github.com/jonathandturner/rustls/issues/21) should use a rope.
-    text: String,
-    line_indices: Vec<u32>,
-    changed: bool,
-    user_data: Option<U>,
-}
-
 impl<T: FileLoader, U> VfsInternal<T, U> {
     fn new() -> VfsInternal<T, U> {
         VfsInternal {
@@ -238,9 +230,16 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
         Ok(())
     }
 
-    // TODO
-    fn write_file(&self, _path: &Path) -> Result<(), Error> {
-        unimplemented!()
+    fn write_file(&self, path: &Path) -> Result<(), Error> {
+        let mut files = self.files.lock().unwrap();
+        match files.get_mut(path) {
+            Some(ref mut f) => {
+                T::write(path, f)?;
+                f.changed = false;
+                Ok(())
+            }
+            None => Err(Error::FileNotCached),
+        }
     }
 
     pub fn set_user_data(&self, path: &Path, data: Option<U>) -> Result<(), Error> {
@@ -311,6 +310,14 @@ fn make_line_indices(text: &str) -> Vec<u32> {
     result
 }
 
+struct File<U> {
+    // FIXME(https://github.com/jonathandturner/rustls/issues/21) should use a rope.
+    text: String,
+    line_indices: Vec<u32>,
+    changed: bool,
+    user_data: Option<U>,
+}
+
 impl<U> File<U> {
     // TODO errors for unwraps
     fn make_change(&mut self, changes: &[&Change]) -> Result<(), Error> {
@@ -362,6 +369,7 @@ fn byte_in_str(s: &str, c: usize) -> Option<usize> {
 
 trait FileLoader {
     fn read<U>(file_name: &Path) -> Result<File<U>, Error>;
+    fn write<U>(file_name: &Path, file: &File<U>) -> Result<(), Error>;
 }
 
 struct RealFileLoader;
@@ -383,5 +391,22 @@ impl FileLoader for RealFileLoader {
             changed: false,
             user_data: None,
         })
+    }
+
+    fn write<U>(file_name: &Path, file: &File<U>) -> Result<(), Error> {
+        use std::io::Write;
+
+        macro_rules! try_io {
+            ($e:expr) => {
+                match $e {
+                    Ok(e) => e,
+                    Err(e) => return Err(Error::Io(Some(file_name.to_owned()), Some(e.to_string()))),
+                }
+            }
+        }
+
+        let mut out = try_io!(::std::fs::File::create(file_name));
+        try_io!(out.write_all(file.text.as_bytes()));
+        Ok(())
     }
 }

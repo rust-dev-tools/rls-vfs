@@ -14,6 +14,15 @@ impl FileLoader for MockFileLoader {
             user_data: None,
         })
     }
+
+    fn write<U>(file_name: &Path, file: &File<U>) -> Result<(), Error> {
+        if file_name.display().to_string() == "foo" {
+            assert_eq!(file.changed, true);
+            assert_eq!(file.text, "foo\nHfooo\nWorld\nHello, World!\n");
+        }
+
+        Ok(())
+    }
 }
 
 fn make_change() -> Change {
@@ -158,6 +167,18 @@ fn test_user_data() {
     vfs.with_user_data(&Path::new("foo"), |u| {
         assert_eq!(u, Err(Error::NoUserDataForFile));
     });
+}
+
+#[test]
+fn test_write() {
+    let vfs = VfsInternal::<MockFileLoader, ()>::new();
+
+    vfs.on_changes(&[make_change()]).unwrap();
+    vfs.write_file(&Path::new("foo")).unwrap();
+    let files = vfs.get_cached_files();
+    assert!(files.len() == 1);
+    let files = vfs.get_changes();
+    assert!(files.is_empty());
 }
 
 // TODO test with wide chars
