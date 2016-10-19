@@ -171,7 +171,7 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
                 }
             }
 
-             let mut file = T::read(Path::new(path))?;
+            let mut file = T::read(Path::new(path))?;
             file.make_change(&changes)?;
 
             let mut files = self.files.lock().unwrap();
@@ -224,6 +224,7 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
 
     fn ensure_file(files: &mut HashMap<PathBuf, File<U>>, path: &Path) -> Result<(), Error>{
         if !files.contains_key(path) {
+            // TODO we should not hold the lock while we read from disk
             let file = T::read(path)?;
             files.insert(path.to_path_buf(), file);
         }
@@ -234,6 +235,7 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
         let mut files = self.files.lock().unwrap();
         match files.get_mut(path) {
             Some(ref mut f) => {
+                // TODO drop the lock on files
                 T::write(path, f)?;
                 f.changed = false;
                 Ok(())
@@ -253,6 +255,8 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
         }
     }
 
+    // Note that f should not be a long-running operation since we hold the lock
+    // to the VFS while it runs.
     pub fn with_user_data<F, R>(&self, path: &Path, f: F) -> R
         where F: FnOnce(Result<&U, Error>) -> R
     {
@@ -268,6 +272,8 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
         })
     }
 
+    // Note that f should not be a long-running operation since we hold the lock
+    // to the VFS while it runs.
     pub fn compute_user_data<F>(&self, path: &Path, f: F) -> Result<(), Error>
         where F: FnOnce(&str) -> Result<U, Error>
     {
@@ -307,6 +313,7 @@ fn make_line_indices(text: &str) -> Vec<u32> {
             result.push((i + 1) as u32);
         }
     }
+    result.push(text.len() as u32);
     result
 }
 
@@ -358,7 +365,9 @@ impl<U> File<U> {
 
 // c is a character offset, returns a byte offset
 fn byte_in_str(s: &str, c: usize) -> Option<usize> {
-    for (i, (b, _)) in s.char_indices().enumerate() {
+    // We simulate a null-terminated string here because spans are exclusive at
+    // the top, and so that index might be outside the length of the string.
+    for (i, (b, _)) in s.char_indices().chain(Some((s.len(), '\0')).into_iter()).enumerate() {
         if c == i {
             return Some(b);
         }
