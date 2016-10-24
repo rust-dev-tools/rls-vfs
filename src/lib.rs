@@ -297,7 +297,7 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
     }
 }
 
-fn coalesce_changes<'a>(changes: &'a [Change]) -> HashMap<&'a str, Vec<&'a Change>> {
+fn coalesce_changes<'a>(changes: &'a [Change]) -> HashMap<&'a Path, Vec<&'a Change>> {
     // Note that for any given file, we preserve the order of the changes.
     let mut result = HashMap::new();
     for c in changes {
