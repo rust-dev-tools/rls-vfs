@@ -28,7 +28,7 @@ impl FileLoader for MockFileLoader {
 fn make_change() -> Change {
     Change {
         span: Span {
-            file_name: "foo".to_owned(),
+            file_name: Path::new("foo").into(),
             line_start: 1,
             line_end: 1,
             column_start: 1,
@@ -41,7 +41,7 @@ fn make_change() -> Change {
 fn make_change_2() -> Change {
     Change {
         span: Span {
-            file_name: "foo".to_owned(),
+            file_name: Path::new("foo").into(),
             line_start: 2,
             line_end: 3,
             column_start: 4,
