@@ -1,8 +1,4 @@
-#![feature(proc_macro)]
-
 extern crate rls_analysis;
-#[macro_use]
-extern crate serde_derive;
 
 use rls_analysis::Span;
 
@@ -27,7 +23,7 @@ macro_rules! try_opt_loc {
 
 pub struct Vfs<U = ()>(VfsInternal<RealFileLoader, U>);
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug)]
 pub struct Change {
     pub span: Span,
     pub text: String,
