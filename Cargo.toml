@@ -2,6 +2,3 @@
 name = "rls-vfs"
 version = "0.1.0"
 authors = ["Nick Cameron <ncameron@mozilla.com>"]
-
-[dependencies]
-rls-analysis = { git = "https://github.com/nrc/rls-analysis" }

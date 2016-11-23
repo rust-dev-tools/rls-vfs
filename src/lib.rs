@@ -1,7 +1,3 @@
-extern crate rls_analysis;
-
-use rls_analysis::Span;
-
 use std::collections::HashMap;
 use std::fs;
 use std::marker::PhantomData;
@@ -11,6 +7,11 @@ use std::sync::Mutex;
 
 #[cfg(test)]
 mod test;
+
+mod text_grid;
+
+pub use text_grid::{Line, Column, Span};
+use text_grid::{LinesIndex, byte_in_line};
 
 macro_rules! try_opt_loc {
     ($e:expr) => {
@@ -25,6 +26,7 @@ pub struct Vfs<U = ()>(VfsInternal<RealFileLoader, U>);
 
 #[derive(Debug)]
 pub struct Change {
+    pub file_name: PathBuf,
     pub span: Span,
     pub text: String,
 }
@@ -95,7 +97,7 @@ impl<U> Vfs<U> {
         self.0.load_file(path)
     }
 
-    pub fn load_line(&self, path: &Path, line: usize) -> Result<String, Error> {
+    pub fn load_line(&self, path: &Path, line: Line) -> Result<String, Error> {
         self.0.load_line(path, line)
     }
 
@@ -180,7 +182,7 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
     fn set_file(&self, path: &Path, text: &str) {
         let file = File {
             text: text.to_owned(),
-            line_indices: make_line_indices(text),
+            line_indices: LinesIndex::from_str(text),
             changed: true,
             user_data: None,
         };
@@ -204,7 +206,7 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
         files.values().any(|f| f.changed)
     }
 
-    fn load_line(&self, path: &Path, line: usize) -> Result<String, Error> {
+    fn load_line(&self, path: &Path, line: Line) -> Result<String, Error> {
         let mut files = self.files.lock().unwrap();
         Self::ensure_file(&mut files, path)?;
 
@@ -297,49 +299,49 @@ fn coalesce_changes<'a>(changes: &'a [Change]) -> HashMap<&'a Path, Vec<&'a Chan
     // Note that for any given file, we preserve the order of the changes.
     let mut result = HashMap::new();
     for c in changes {
-        result.entry(&*c.span.file_name).or_insert(vec![]).push(c);
+        result.entry(&*c.file_name).or_insert(vec![]).push(c);
     }
-    result
-}
-
-fn make_line_indices(text: &str) -> Vec<u32> {
-    let mut result = vec![0];
-    for (i, b) in text.bytes().enumerate() {
-        if b == 0xA {
-            result.push((i + 1) as u32);
-        }
-    }
-    result.push(text.len() as u32);
     result
 }
 
 struct File<U> {
     // FIXME(https://github.com/jonathandturner/rustls/issues/21) should use a rope.
     text: String,
-    line_indices: Vec<u32>,
+    line_indices: LinesIndex,
     changed: bool,
     user_data: Option<U>,
 }
 
 impl<U> File<U> {
+    #[cfg(test)]
+    fn from_text(text: String) -> File<U> {
+        let line_indices = LinesIndex::from_str(&text);
+        File {
+            text: text,
+            line_indices: line_indices,
+            changed: false,
+            user_data: None,
+        }
+    }
+
     // TODO errors for unwraps
     fn make_change(&mut self, changes: &[&Change]) -> Result<(), Error> {
         for c in changes {
             let range = {
-                let first_line = self.load_line(c.span.line_start).unwrap();
-                let last_line = self.load_line(c.span.line_end).unwrap();
+                let first_line = self.load_line(c.span.start.0).unwrap();
+                let last_line = self.load_line(c.span.start.0).unwrap();
 
-                let byte_start = self.line_indices[c.span.line_start] +
-                                 byte_in_str(first_line, c.span.column_start).unwrap() as u32;
-                let byte_end = self.line_indices[c.span.line_end] +
-                               byte_in_str(last_line, c.span.column_end).unwrap() as u32;
+                let byte_start = self.line_indices[c.span.start.0] +
+                                 byte_in_line(first_line, c.span.start.1).unwrap() as u32;
+                let byte_end = self.line_indices[c.span.end.0] +
+                               byte_in_line(last_line, c.span.end.1).unwrap() as u32;
                 (byte_start, byte_end)
             };
             let mut new_text = self.text[..range.0 as usize].to_owned();
             new_text.push_str(&c.text);
             new_text.push_str(&self.text[range.1 as usize..]);
             self.text = new_text;
-            self.line_indices = make_line_indices(&self.text);
+            self.line_indices = LinesIndex::from_str(&self.text);
         }
 
         self.changed = true;
@@ -347,7 +349,7 @@ impl<U> File<U> {
         Ok(())
     }
 
-    fn load_line(&self, line: usize) -> Result<&str, Error> {
+    fn load_line(&self, line: Line) -> Result<&str, Error> {
         let start = *try_opt_loc!(self.line_indices.get(line));
         let end = *try_opt_loc!(self.line_indices.get(line + 1));
 
@@ -359,18 +361,6 @@ impl<U> File<U> {
     }
 }
 
-// c is a character offset, returns a byte offset
-fn byte_in_str(s: &str, c: usize) -> Option<usize> {
-    // We simulate a null-terminated string here because spans are exclusive at
-    // the top, and so that index might be outside the length of the string.
-    for (i, (b, _)) in s.char_indices().chain(Some((s.len(), '\0')).into_iter()).enumerate() {
-        if c == i {
-            return Some(b);
-        }
-    }
-
-    return None;
-}
 
 trait FileLoader {
     fn read<U>(file_name: &Path) -> Result<File<U>, Error>;
@@ -391,7 +381,7 @@ impl FileLoader for RealFileLoader {
         }
         let text = String::from_utf8(buf).unwrap();
         Ok(File {
-            line_indices: make_line_indices(&text),
+            line_indices: LinesIndex::from_str(&text),
             text: text,
             changed: false,
             user_data: None,
