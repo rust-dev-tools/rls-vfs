@@ -1,8 +1,4 @@
-extern crate rls_analysis;
-
-use rls_analysis::Span;
-
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map};
 use std::fs;
 use std::marker::PhantomData;
 use std::io::Read;
@@ -23,10 +19,29 @@ macro_rules! try_opt_loc {
 
 pub struct Vfs<U = ()>(VfsInternal<RealFileLoader, U>);
 
-#[derive(Debug)]
-pub struct Change {
-    pub span: Span,
-    pub text: String,
+pub type Changes = HashMap<PathBuf, FileChange>;
+
+pub enum FileChange {
+    /// Load file from disk into memory and set it's contents.
+    /// Only `Add` and `Untrack` changes can be used if there is no
+    /// need in (potentially more efficient) incremental changes.
+    Add {
+        text: String,
+    },
+    /// Changes in-memory contents of the previously added file.
+    Change {
+        edits: Vec<TextEdit>,
+    },
+    /// Discard in memory changes and use disk as the source of truth.
+    Untrack,
+}
+
+pub type LineColumn = (usize, usize);
+
+pub struct TextEdit {
+    start: LineColumn,
+    end: LineColumn,
+    text: String,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -58,18 +73,12 @@ impl<U> Vfs<U> {
         self.0.file_saved(path)
     }
 
-    /// Removes a file from the VFS. Does not check if the file is synced with
-    /// the disk. Does not check if the file exists.
-    pub fn flush_file(&self, path: &Path) -> Result<(), Error> {
-        self.0.flush_file(path)
-    }
-
     pub fn file_is_synced(&self, path: &Path) -> Result<bool, Error> {
         self.0.file_is_synced(path)
     }
 
     /// Record a set of changes to the VFS.
-    pub fn on_changes(&self, changes: &[Change]) -> Result<(), Error> {
+    pub fn on_changes(&self, changes: &Changes) -> Result<(), Error> {
         self.0.on_changes(changes)
     }
 
@@ -142,12 +151,6 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
         Ok(())
     }
 
-    fn flush_file(&self, path: &Path) -> Result<(), Error> {
-        let mut files = self.files.lock().unwrap();
-        files.remove(path);
-        Ok(())
-    }
-
     fn file_is_synced(&self, path: &Path) -> Result<bool, Error> {
         let files = self.files.lock().unwrap();
         match files.get(path) {
@@ -156,22 +159,30 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
         }
     }
 
-    fn on_changes(&self, changes: &[Change]) -> Result<(), Error> {
-        for (file_name, changes) in coalesce_changes(changes) {
+    fn on_changes(&self, changes: &Changes) -> Result<(), Error> {
+        for (file_name, change) in changes {
             let path = Path::new(file_name);
-            {
-                let mut files = self.files.lock().unwrap();
-                if let Some(file) = files.get_mut(Path::new(path)) {
-                    file.make_change(&changes)?;
-                    continue;
+            let mut files = self.files.lock().unwrap();
+            match *change {
+                FileChange::Add { ref text } => {
+                    files.insert(path.to_path_buf(), File::from_text(text.clone()));
+                }
+                FileChange::Change { ref edits } => {
+                    let mut file = match files.entry(path.to_path_buf()) {
+                        hash_map::Entry::Occupied(o) => o.into_mut(),
+                        // FIXME: this is subtly broken, because we can't guarantee that the edits
+                        // are intended to be applied to the version of the file we read from disk.
+                        // That is, the on disk contents might have changed after the edit request.
+                        // The proper solution is to error here and to require that all files are
+                        // added first.
+                        hash_map::Entry::Vacant(v) => v.insert(T::read(path)?)
+                    };
+                    file.make_edits(edits.as_ref())?;
+                }
+                FileChange::Untrack => {
+                    files.remove(path);
                 }
             }
-
-            let mut file = T::read(Path::new(path))?;
-            file.make_change(&changes)?;
-
-            let mut files = self.files.lock().unwrap();
-            files.insert(path.to_path_buf(), file);
         }
 
         Ok(())
@@ -293,15 +304,6 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
     }
 }
 
-fn coalesce_changes<'a>(changes: &'a [Change]) -> HashMap<&'a Path, Vec<&'a Change>> {
-    // Note that for any given file, we preserve the order of the changes.
-    let mut result = HashMap::new();
-    for c in changes {
-        result.entry(&*c.span.file_name).or_insert(vec![]).push(c);
-    }
-    result
-}
-
 fn make_line_indices(text: &str) -> Vec<u32> {
     let mut result = vec![0];
     for (i, b) in text.bytes().enumerate() {
@@ -322,21 +324,32 @@ struct File<U> {
 }
 
 impl<U> File<U> {
-    // TODO errors for unwraps
-    fn make_change(&mut self, changes: &[&Change]) -> Result<(), Error> {
-        for c in changes {
-            let range = {
-                let first_line = self.load_line(c.span.line_start).unwrap();
-                let last_line = self.load_line(c.span.line_end).unwrap();
 
-                let byte_start = self.line_indices[c.span.line_start] +
-                                 byte_in_str(first_line, c.span.column_start).unwrap() as u32;
-                let byte_end = self.line_indices[c.span.line_end] +
-                               byte_in_str(last_line, c.span.column_end).unwrap() as u32;
+    fn from_text(text: String) -> Self {
+        let indices = make_line_indices(&text);
+        File {
+            text: text,
+            line_indices: indices,
+            changed: true,
+            user_data: None,
+        }
+    }
+
+    // TODO errors for unwraps
+    fn make_edits(&mut self, edits: &[TextEdit]) -> Result<(), Error> {
+        for e in edits {
+            let range = {
+                let first_line = self.load_line(e.start.0).unwrap();
+                let last_line = self.load_line(e.end.0).unwrap();
+
+                let byte_start = self.line_indices[e.start.0] +
+                                 byte_in_str(first_line, e.start.1).unwrap() as u32;
+                let byte_end = self.line_indices[e.end.0] +
+                               byte_in_str(last_line, e.end.1).unwrap() as u32;
                 (byte_start, byte_end)
             };
             let mut new_text = self.text[..range.0 as usize].to_owned();
-            new_text.push_str(&c.text);
+            new_text.push_str(&e.text);
             new_text.push_str(&self.text[range.1 as usize..]);
             self.text = new_text;
             self.line_indices = make_line_indices(&self.text);
