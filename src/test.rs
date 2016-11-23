@@ -1,5 +1,4 @@
-use super::{VfsInternal, Change, FileLoader, File, Error, make_line_indices};
-use rls_analysis::Span;
+use super::{VfsInternal, Change, FileLoader, File, Error};
 use std::path::{Path, PathBuf};
 
 struct MockFileLoader;
@@ -7,12 +6,7 @@ struct MockFileLoader;
 impl FileLoader for MockFileLoader {
     fn read<U>(file_name: &Path) -> Result<File<U>, Error> {
         let text = format!("{}\nHello\nWorld\nHello, World!\n", file_name.display());
-        Ok(File {
-            line_indices: make_line_indices(&text),
-            text: text,
-            changed: false,
-            user_data: None,
-        })
+        Ok(File::from_text(text))
     }
 
     fn write<U>(file_name: &Path, file: &File<U>) -> Result<(), Error> {
@@ -27,26 +21,16 @@ impl FileLoader for MockFileLoader {
 
 fn make_change() -> Change {
     Change {
-        span: Span {
-            file_name: Path::new("foo").into(),
-            line_start: 1,
-            line_end: 1,
-            column_start: 1,
-            column_end: 4,
-        },
+        file_name: Path::new("foo").into(),
+        span: ((1, 1), (1, 4)).into(),
         text: "foo".to_owned(),
     }
 }
 
 fn make_change_2() -> Change {
     Change {
-        span: Span {
-            file_name: Path::new("foo").into(),
-            line_start: 2,
-            line_end: 3,
-            column_start: 4,
-            column_end: 2,
-        },
+        file_name: Path::new("foo").into(),
+        span: ((2, 4), (3, 2)).into(),
         text: "aye carumba".to_owned(),
     }
 }
@@ -73,9 +57,9 @@ fn test_cached_files() {
     vfs.load_file(&Path::new("foo")).unwrap();
     vfs.load_file(&Path::new("bar")).unwrap();
     let files = vfs.get_cached_files();
-    assert!(files.len() == 2);
-    assert!(files[Path::new("foo")] == "foo\nHello\nWorld\nHello, World!\n");
-    assert!(files[Path::new("bar")] == "bar\nHello\nWorld\nHello, World!\n");
+    assert_eq!(files.len(), 2);
+    assert_eq!(files[Path::new("foo")], "foo\nHello\nWorld\nHello, World!\n");
+    assert_eq!(files[Path::new("bar")], "bar\nHello\nWorld\nHello, World!\n");
 }
 
 #[test]
@@ -94,16 +78,16 @@ fn test_changes() {
 
     vfs.on_changes(&[make_change()]).unwrap();
     let files = vfs.get_cached_files();
-    assert!(files.len() == 1);
-    assert!(files[&PathBuf::from("foo")] == "foo\nHfooo\nWorld\nHello, World!\n");
-    assert!(vfs.load_file(&Path::new("foo")) == Ok("foo\nHfooo\nWorld\nHello, World!\n".to_owned()));
-    assert!(vfs.load_file(&Path::new("bar")) == Ok("bar\nHello\nWorld\nHello, World!\n".to_owned()));
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[&PathBuf::from("foo")], "foo\nHfooo\nWorld\nHello, World!\n");
+    assert_eq!(vfs.load_file(&Path::new("foo")), Ok("foo\nHfooo\nWorld\nHello, World!\n".to_owned()));
+    assert_eq!(vfs.load_file(&Path::new("bar")), Ok("bar\nHello\nWorld\nHello, World!\n".to_owned()));
 
     vfs.on_changes(&[make_change_2()]).unwrap();
     let files = vfs.get_cached_files();
-    assert!(files.len() == 2);
-    assert!(files[&PathBuf::from("foo")] == "foo\nHfooo\nWorlaye carumballo, World!\n");
-    assert!(vfs.load_file(&Path::new("foo")) == Ok("foo\nHfooo\nWorlaye carumballo, World!\n".to_owned()));
+    assert_eq!(files.len(), 2);
+    assert_eq!(files[&PathBuf::from("foo")], "foo\nHfooo\nWorlaye carumballo, World!\n");
+    assert_eq!(vfs.load_file(&Path::new("foo")), Ok("foo\nHfooo\nWorlaye carumballo, World!\n".to_owned()));
 }
 
 #[test]
