@@ -5,3 +5,7 @@ authors = ["Nick Cameron <ncameron@mozilla.com>"]
 
 [dependencies]
 rls-analysis = { git = "https://github.com/nrc/rls-analysis" }
+racer = { git = "https://github.com/phildawes/racer", optional = true }
+
+[features]
+racer-impls = ["racer"]

@@ -3,11 +3,15 @@ extern crate rls_analysis;
 use rls_analysis::Span;
 
 use std::collections::HashMap;
+use std::fmt;
 use std::fs;
-use std::marker::PhantomData;
 use std::io::Read;
+use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+
+#[cfg(feature = "racer-impls")]
+mod racer_impls;
 
 #[cfg(test)]
 mod test;
@@ -44,6 +48,41 @@ pub enum Error {
     FileNotCached,
     /// Not really an error, file is cached but there is no user data for it.
     NoUserDataForFile,
+}
+
+impl ::std::error::Error for Error {
+    fn description(&self) -> &str {
+        match *self {
+            Error::OutOfSync(ref _path_buf) => "file out of sync with filesystem",
+            Error::Io(ref _path_buf, ref _message) => "io::Error reading or writing path",
+            Error::UncommittedChanges(ref _path_buf) => {
+                "changes exist which have not been written to disk"
+            },
+            Error::BadLocation => "client specified location not existing within a file",
+            Error::FileNotCached => "requested file was not cached in the VFS",
+            Error::NoUserDataForFile => "file is cached but there is no user data for it",
+        }
+    }
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Error::OutOfSync(ref path_buf) => {
+                write!(f, "file {} out of sync with filesystem", path_buf.display())
+            },
+            Error::UncommittedChanges(ref path_buf) => {
+                write!(f, "{} has uncommitted changes", path_buf.display())
+            },
+            Error::BadLocation
+            | Error::FileNotCached
+            | Error::NoUserDataForFile
+            | Error::Io(_, _)
+            => {
+                f.write_str(::std::error::Error::description(self))
+            }
+        }
+    }
 }
 
 impl<U> Vfs<U> {
