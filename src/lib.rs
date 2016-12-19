@@ -1,6 +1,4 @@
-extern crate rls_analysis;
-
-use rls_analysis::Span;
+extern crate rls_span as span;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -26,6 +24,8 @@ macro_rules! try_opt_loc {
 }
 
 pub struct Vfs<U = ()>(VfsInternal<RealFileLoader, U>);
+
+type Span = span::Span<span::ZeroIndexed>;
 
 #[derive(Debug)]
 pub struct Change {
@@ -134,7 +134,7 @@ impl<U> Vfs<U> {
         self.0.load_file(path)
     }
 
-    pub fn load_line(&self, path: &Path, line: usize) -> Result<String, Error> {
+    pub fn load_line(&self, path: &Path, line: span::Row<span::ZeroIndexed>) -> Result<String, Error> {
         self.0.load_line(path, line)
     }
 
@@ -243,7 +243,7 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
         files.values().any(|f| f.changed)
     }
 
-    fn load_line(&self, path: &Path, line: usize) -> Result<String, Error> {
+    fn load_line(&self, path: &Path, line: span::Row<span::ZeroIndexed>) -> Result<String, Error> {
         let mut files = self.files.lock().unwrap();
         Self::ensure_file(&mut files, path)?;
 
@@ -336,7 +336,7 @@ fn coalesce_changes<'a>(changes: &'a [Change]) -> HashMap<&'a Path, Vec<&'a Chan
     // Note that for any given file, we preserve the order of the changes.
     let mut result = HashMap::new();
     for c in changes {
-        result.entry(&*c.span.file_name).or_insert(vec![]).push(c);
+        result.entry(&*c.span.file).or_insert(vec![]).push(c);
     }
     result
 }
@@ -365,13 +365,13 @@ impl<U> File<U> {
     fn make_change(&mut self, changes: &[&Change]) -> Result<(), Error> {
         for c in changes {
             let range = {
-                let first_line = self.load_line(c.span.line_start).unwrap();
-                let last_line = self.load_line(c.span.line_end).unwrap();
+                let first_line = self.load_line(c.span.range.row_start).unwrap();
+                let last_line = self.load_line(c.span.range.row_end).unwrap();
 
-                let byte_start = self.line_indices[c.span.line_start] +
-                                 byte_in_str(first_line, c.span.column_start).unwrap() as u32;
-                let byte_end = self.line_indices[c.span.line_end] +
-                               byte_in_str(last_line, c.span.column_end).unwrap() as u32;
+                let byte_start = self.line_indices[c.span.range.row_start.0 as usize] +
+                                 byte_in_str(first_line, c.span.range.col_start).unwrap() as u32;
+                let byte_end = self.line_indices[c.span.range.row_end.0 as usize] +
+                               byte_in_str(last_line, c.span.range.col_end).unwrap() as u32;
                 (byte_start, byte_end)
             };
             let mut new_text = self.text[..range.0 as usize].to_owned();
@@ -386,9 +386,9 @@ impl<U> File<U> {
         Ok(())
     }
 
-    fn load_line(&self, line: usize) -> Result<&str, Error> {
-        let start = *try_opt_loc!(self.line_indices.get(line));
-        let end = *try_opt_loc!(self.line_indices.get(line + 1));
+    fn load_line(&self, line: span::Row<span::ZeroIndexed>) -> Result<&str, Error> {
+        let start = *try_opt_loc!(self.line_indices.get(line.0 as usize));
+        let end = *try_opt_loc!(self.line_indices.get(line.0 as usize + 1));
 
         if (end as usize) <= self.text.len() && start <= end {
             Ok(&self.text[start as usize .. end as usize])
@@ -399,11 +399,11 @@ impl<U> File<U> {
 }
 
 // c is a character offset, returns a byte offset
-fn byte_in_str(s: &str, c: usize) -> Option<usize> {
+fn byte_in_str(s: &str, c: span::Column<span::ZeroIndexed>) -> Option<usize> {
     // We simulate a null-terminated string here because spans are exclusive at
     // the top, and so that index might be outside the length of the string.
     for (i, (b, _)) in s.char_indices().chain(Some((s.len(), '\0')).into_iter()).enumerate() {
-        if c == i {
+        if c.0 as usize == i {
             return Some(b);
         }
     }
