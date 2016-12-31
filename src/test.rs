@@ -111,44 +111,65 @@ fn test_user_data() {
     vfs.load_file(&Path::new("foo")).unwrap();
     vfs.with_user_data(&Path::new("foo"), |u| {
         assert_eq!(u, Err(Error::NoUserDataForFile));
-    });
+        Ok(())
+    }).unwrap();
 
     // Set and read data.
     vfs.set_user_data(&Path::new("foo"), Some(42)).unwrap();
     vfs.with_user_data(&Path::new("foo"), |u| {
-        assert_eq!(u, Ok(&42));
-    });
+        assert_eq!(*u.unwrap().1, 42);
+        Ok(())
+    }).unwrap();
     assert_eq!(vfs.set_user_data(&Path::new("bar"), Some(42)), Err(Error::FileNotCached));
 
+    // ensure_user_data should not be called if the userdata already exists.
+    vfs.ensure_user_data(&Path::new("foo"), |_| { panic!() }).unwrap();
+
+    // Test ensure_user_data is called.
+    vfs.load_file(&Path::new("bar")).unwrap();
+    vfs.ensure_user_data(&Path::new("bar"), |_| {
+        Ok(1)
+    }).unwrap();
+    vfs.with_user_data(&Path::new("bar"), |u| {
+        assert_eq!(*u.unwrap().1, 1);
+        Ok(())
+    }).unwrap();
+
     // compute and read data.
-    vfs.compute_user_data(&Path::new("foo"), |s| {
-        assert_eq!(s, "foo\nHello\nWorld\nHello, World!\n");
-        Ok(43)
+    vfs.with_user_data(&Path::new("foo"), |u| {
+        assert_eq!(u.as_ref().unwrap().0, "foo\nHello\nWorld\nHello, World!\n");
+        *u.unwrap().1 = 43;
+        Ok(())
     }).unwrap();
     vfs.with_user_data(&Path::new("foo"), |u| {
-        assert_eq!(u, Ok(&43));
-    });
-    assert_eq!(vfs.compute_user_data(&Path::new("foo"), |_| {
-        Err(Error::BadLocation)
+        assert_eq!(*u.unwrap().1, 43);
+        Ok(())
+    }).unwrap();
+    assert_eq!(vfs.with_user_data(&Path::new("foo"), |u| {
+        assert_eq!(*u.unwrap().1, 43);
+        Err(Error::BadLocation): Result<(), Error>
     }), Err(Error::BadLocation));
     vfs.with_user_data(&Path::new("foo"), |u| {
-        assert_eq!(u, Ok(&43));
-    });
+        assert_eq!(*u.unwrap().1, 43);
+        Ok(())
+    }).unwrap();
 
     // Clear and read data.
     vfs.set_user_data(&Path::new("foo"), None).unwrap();
     vfs.with_user_data(&Path::new("foo"), |u| {
         assert_eq!(u, Err(Error::NoUserDataForFile));
-    });
+        Ok(())
+    }).unwrap();
 
     // Compute (clear) and read data.
     vfs.set_user_data(&Path::new("foo"), Some(42)).unwrap();
-    vfs.compute_user_data(&Path::new("foo"), |_| {
-        Err(Error::NoUserDataForFile)
-    }).unwrap();
+    assert_eq!(vfs.with_user_data(&Path::new("foo"), |_| {
+        Err(Error::NoUserDataForFile): Result<(), Error>
+    }), Err(Error::NoUserDataForFile));
     vfs.with_user_data(&Path::new("foo"), |u| {
         assert_eq!(u, Err(Error::NoUserDataForFile));
-    });
+        Ok(())
+    }).unwrap();
 
     // Flushing a file should clear user data.
     vfs.set_user_data(&Path::new("foo"), Some(42)).unwrap();
@@ -156,14 +177,16 @@ fn test_user_data() {
     vfs.load_file(&Path::new("foo")).unwrap();
     vfs.with_user_data(&Path::new("foo"), |u| {
         assert_eq!(u, Err(Error::NoUserDataForFile));
-    });
+        Ok(())
+    }).unwrap();
 
     // Recording a change should clear user data.
     vfs.set_user_data(&Path::new("foo"), Some(42)).unwrap();
     vfs.on_changes(&[make_change()]).unwrap();
     vfs.with_user_data(&Path::new("foo"), |u| {
         assert_eq!(u, Err(Error::NoUserDataForFile));
-    });
+        Ok(())
+    }).unwrap();
 }
 
 #[test]

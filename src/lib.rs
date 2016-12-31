@@ -1,3 +1,5 @@
+#![feature(type_ascription)]
+
 extern crate rls_span as span;
 
 use std::collections::HashMap;
@@ -62,6 +64,12 @@ impl ::std::error::Error for Error {
             Error::FileNotCached => "requested file was not cached in the VFS",
             Error::NoUserDataForFile => "file is cached but there is no user data for it",
         }
+    }
+}
+
+impl Into<String> for Error {
+    fn into(self) -> String {
+        ::std::error::Error::description(&self).to_owned()
     }
 }
 
@@ -146,17 +154,18 @@ impl<U> Vfs<U> {
         self.0.set_user_data(path, data)
     }
 
-    pub fn with_user_data<F, R>(&self, path: &Path, f: F) -> R
-        where F: FnOnce(Result<&U, Error>) -> R
+    // If f returns NoUserDataForFile, then the user data for the given file is erased.
+    pub fn with_user_data<F, R>(&self, path: &Path, f: F) -> Result<R, Error>
+        where F: FnOnce(Result<(&str, &mut U), Error>) -> Result<R, Error>
     {
         self.0.with_user_data(path, f)
     }
 
     // If f returns NoUserDataForFile, then the user data for the given file is erased.
-    pub fn compute_user_data<F>(&self, path: &Path, f: F) -> Result<(), Error>
+    pub fn ensure_user_data<F>(&self, path: &Path, f: F) -> Result<(), Error>
         where F: FnOnce(&str) -> Result<U, Error>
     {
-        self.0.compute_user_data(path, f)
+        self.0.ensure_user_data(path, f)
     }
 
     pub fn clear(&self) {
@@ -301,39 +310,47 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
 
     // Note that f should not be a long-running operation since we hold the lock
     // to the VFS while it runs.
-    pub fn with_user_data<F, R>(&self, path: &Path, f: F) -> R
-        where F: FnOnce(Result<&U, Error>) -> R
+    pub fn with_user_data<F, R>(&self, path: &Path, f: F) -> Result<R, Error>
+        where F: FnOnce(Result<(&str, &mut U), Error>) -> Result<R, Error>
     {
-        let files = self.files.lock().unwrap();
-        let file = match files.get(path) {
+        let mut files = self.files.lock().unwrap();
+        let file = match files.get_mut(path) {
             Some(f) => f,
             None => return f(Err(Error::FileNotCached)),
         };
 
-        f(match file.user_data {
-            Some(ref u) => Ok(u),
+        let result = f(match file.user_data {
+            Some(ref mut u) => Ok((&file.text, u)),
             None => Err(Error::NoUserDataForFile),
-        })
+        });
+
+        if let Err(Error::NoUserDataForFile) = result {
+            file.user_data = None;
+        }
+
+        result
     }
 
-    // Note that f should not be a long-running operation since we hold the lock
-    // to the VFS while it runs.
-    pub fn compute_user_data<F>(&self, path: &Path, f: F) -> Result<(), Error>
+    pub fn ensure_user_data<F>(&self, path: &Path, f: F) -> Result<(), Error>
         where F: FnOnce(&str) -> Result<U, Error>
     {
         let mut files = self.files.lock().unwrap();
         match files.get_mut(path) {
             Some(ref mut file) => {
-                match f(&file.text) {
-                    Ok(u) => {
-                        file.user_data = Some(u);
-                        Ok(())
+                if let None = file.user_data {
+                    match f(&file.text) {
+                        Ok(u) => {
+                            file.user_data = Some(u);
+                            Ok(())
+                        }
+                        Err(Error::NoUserDataForFile) => {
+                            file.user_data = None;
+                            Ok(())
+                        }
+                        Err(e) => Err(e),
                     }
-                    Err(Error::NoUserDataForFile) => {
-                        file.user_data = None;
-                        Ok(())
-                    }
-                    Err(e) => Err(e),
+                } else {
+                    Ok(())
                 }
             },
             None => Err(Error::FileNotCached),
