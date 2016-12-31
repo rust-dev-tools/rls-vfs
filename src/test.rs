@@ -1,5 +1,6 @@
 use super::{VfsInternal, Change, FileLoader, File, Error, make_line_indices};
 use Span;
+use span::{Row, Column};
 use std::path::{Path, PathBuf};
 
 struct MockFileLoader;
@@ -27,26 +28,22 @@ impl FileLoader for MockFileLoader {
 
 fn make_change() -> Change {
     Change {
-        span: Span {
-            file_name: Path::new("foo").into(),
-            line_start: 1,
-            line_end: 1,
-            column_start: 1,
-            column_end: 4,
-        },
+        span: Span::new(Row::new_zero_indexed(1),
+                        Row::new_zero_indexed(1),
+                        Column::new_zero_indexed(1),
+                        Column::new_zero_indexed(4),
+                        "foo"),
         text: "foo".to_owned(),
     }
 }
 
 fn make_change_2() -> Change {
     Change {
-        span: Span {
-            file_name: Path::new("foo").into(),
-            line_start: 2,
-            line_end: 3,
-            column_start: 4,
-            column_end: 2,
-        },
+        span: Span::new(Row::new_zero_indexed(2),
+                        Row::new_zero_indexed(3),
+                        Column::new_zero_indexed(4),
+                        Column::new_zero_indexed(2),
+                        "foo"),
         text: "aye carumba".to_owned(),
     }
 }
