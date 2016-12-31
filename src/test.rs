@@ -1,5 +1,5 @@
 use super::{VfsInternal, Change, FileLoader, File, Error, make_line_indices};
-use rls_analysis::Span;
+use Span;
 use std::path::{Path, PathBuf};
 
 struct MockFileLoader;
@@ -179,6 +179,16 @@ fn test_write() {
     assert!(files.len() == 1);
     let files = vfs.get_changes();
     assert!(files.is_empty());
+}
+
+#[test]
+fn test_clear() {
+    let vfs = VfsInternal::<MockFileLoader, ()>::new();
+    vfs.load_file(&Path::new("foo")).unwrap();
+    vfs.load_file(&Path::new("bar")).unwrap();
+    assert!(vfs.get_cached_files().len() == 2);
+    vfs.clear();
+    assert!(vfs.get_cached_files().is_empty());
 }
 
 // TODO test with wide chars

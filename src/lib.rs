@@ -158,6 +158,10 @@ impl<U> Vfs<U> {
     {
         self.0.compute_user_data(path, f)
     }
+
+    pub fn clear(&self) {
+        self.0.clear()
+    }
 }
 
 struct VfsInternal<T, U> {
@@ -171,6 +175,11 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
             files: Mutex::new(HashMap::new()),
             loader: PhantomData,
         }
+    }
+
+    fn clear(&self) {
+        let mut files = self.files.lock().unwrap();
+        *files = HashMap::new();
     }
 
     fn file_saved(&self, path: &Path) -> Result<(), Error> {
