@@ -454,7 +454,7 @@ impl FileLoader for RealFileLoader {
         if let Err(_) = file.read_to_end(&mut buf) {
             return Err(Error::Io(Some(file_name.to_owned()), Some(format!("Could not read file: {}", file_name.display()))));
         }
-        let text = String::from_utf8(buf).unwrap();
+        let text = String::from_utf8(buf).map_err(|e| Error::Io(Some(file_name.to_owned()), Some(::std::error::Error::description(&e).to_owned())))?;
         Ok(File {
             line_indices: make_line_indices(&text),
             text: text,
