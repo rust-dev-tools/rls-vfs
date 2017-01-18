@@ -30,9 +30,26 @@ pub struct Vfs<U = ()>(VfsInternal<RealFileLoader, U>);
 type Span = span::Span<span::ZeroIndexed>;
 
 #[derive(Debug)]
-pub struct Change {
-    pub span: Span,
-    pub text: String,
+pub enum Change {
+    /// Create an in-memory image of the file.
+    AddFile {
+        file: PathBuf,
+        text: String,
+    },
+    /// Changes in-memory contents of the previously added file.
+    Replace {
+        span: Span,
+        text: String,
+    },
+}
+
+impl Change {
+    fn file(&self) -> &Path {
+        match *self {
+            Change::AddFile { ref file, .. } => file.as_ref(),
+            Change::Replace { ref span, .. } => span.file.as_ref(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -224,6 +241,12 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
                 }
             }
 
+            // XXX: if the first change is `Add`, we should avoid loading
+            // the file. If the first change is not `Add`, then this is
+            // subtly broken, because we can't guarantee that the edits
+            // are intended to be applied to the version of the file we
+            // read from disk. That is, the on disk contents might have
+            // changed after the edit request.
             let mut file = T::read(Path::new(path))?;
             file.make_change(&changes)?;
 
@@ -362,7 +385,7 @@ fn coalesce_changes<'a>(changes: &'a [Change]) -> HashMap<&'a Path, Vec<&'a Chan
     // Note that for any given file, we preserve the order of the changes.
     let mut result = HashMap::new();
     for c in changes {
-        result.entry(&*c.span.file).or_insert(vec![]).push(c);
+        result.entry(&*c.file()).or_insert(vec![]).push(c);
     }
     result
 }
@@ -390,19 +413,26 @@ impl<U> File<U> {
     // TODO errors for unwraps
     fn make_change(&mut self, changes: &[&Change]) -> Result<(), Error> {
         for c in changes {
-            let range = {
-                let first_line = self.load_line(c.span.range.row_start).unwrap();
-                let last_line = self.load_line(c.span.range.row_end).unwrap();
+            let new_text = match **c {
+                Change::Replace { ref span, ref text } => {
+                    let range = {
+                        let first_line = self.load_line(span.range.row_start).unwrap();
+                        let last_line = self.load_line(span.range.row_end).unwrap();
 
-                let byte_start = self.line_indices[c.span.range.row_start.0 as usize] +
-                                 byte_in_str(first_line, c.span.range.col_start).unwrap() as u32;
-                let byte_end = self.line_indices[c.span.range.row_end.0 as usize] +
-                               byte_in_str(last_line, c.span.range.col_end).unwrap() as u32;
-                (byte_start, byte_end)
+                        let byte_start = self.line_indices[span.range.row_start.0 as usize] +
+                            byte_in_str(first_line, span.range.col_start).unwrap() as u32;
+                        let byte_end = self.line_indices[span.range.row_end.0 as usize] +
+                            byte_in_str(last_line, span.range.col_end).unwrap() as u32;
+                        (byte_start, byte_end)
+                    };
+                    let mut new_text = self.text[..range.0 as usize].to_owned();
+                    new_text.push_str(text);
+                    new_text.push_str(&self.text[range.1 as usize..]);
+                    new_text
+                }
+                Change::AddFile { file: _, ref text } => text.to_owned()
             };
-            let mut new_text = self.text[..range.0 as usize].to_owned();
-            new_text.push_str(&c.text);
-            new_text.push_str(&self.text[range.1 as usize..]);
+
             self.text = new_text;
             self.line_indices = make_line_indices(&self.text);
         }
