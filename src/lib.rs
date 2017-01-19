@@ -37,7 +37,7 @@ pub enum Change {
         text: String,
     },
     /// Changes in-memory contents of the previously added file.
-    Replace {
+    ReplaceText {
         span: Span,
         text: String,
     },
@@ -47,7 +47,7 @@ impl Change {
     fn file(&self) -> &Path {
         match *self {
             Change::AddFile { ref file, .. } => file.as_ref(),
-            Change::Replace { ref span, .. } => span.file.as_ref(),
+            Change::ReplaceText { ref span, .. } => span.file.as_ref(),
         }
     }
 }
@@ -241,11 +241,11 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
                 }
             }
 
-            // XXX: if the first change is `Add`, we should avoid loading
-            // the file. If the first change is not `Add`, then this is
-            // subtly broken, because we can't guarantee that the edits
-            // are intended to be applied to the version of the file we
-            // read from disk. That is, the on disk contents might have
+            // FIXME(#11): if the first change is `Add`, we should avoid
+            // loading the file. If the first change is not `Add`, then
+            // this is subtly broken, because we can't guarantee that the
+            // edits are intended to be applied to the version of the file
+            // we read from disk. That is, the on disk contents might have
             // changed after the edit request.
             let mut file = T::read(Path::new(path))?;
             file.make_change(&changes)?;
@@ -414,7 +414,7 @@ impl<U> File<U> {
     fn make_change(&mut self, changes: &[&Change]) -> Result<(), Error> {
         for c in changes {
             let new_text = match **c {
-                Change::Replace { ref span, ref text } => {
+                Change::ReplaceText { ref span, ref text } => {
                     let range = {
                         let first_line = self.load_line(span.range.row_start).unwrap();
                         let last_line = self.load_line(span.range.row_end).unwrap();

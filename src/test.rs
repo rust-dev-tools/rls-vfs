@@ -27,7 +27,7 @@ impl FileLoader for MockFileLoader {
 }
 
 fn make_change() -> Change {
-    Change::Replace {
+    Change::ReplaceText {
         span: Span::new(Row::new_zero_indexed(1),
                         Row::new_zero_indexed(1),
                         Column::new_zero_indexed(1),
@@ -38,7 +38,7 @@ fn make_change() -> Change {
 }
 
 fn make_change_2() -> Change {
-    Change::Replace {
+    Change::ReplaceText {
         span: Span::new(Row::new_zero_indexed(2),
                         Row::new_zero_indexed(3),
                         Column::new_zero_indexed(4),
