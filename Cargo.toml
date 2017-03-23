@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Nick Cameron <ncameron@mozilla.com>"]
 
 [dependencies]
-rls-span = { git = "https://github.com/nrc/rls-span" }
+rls-span = "0.1"
 racer = { git = "https://github.com/phildawes/racer", optional = true }
 
 [features]
