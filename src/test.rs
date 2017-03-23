@@ -27,7 +27,7 @@ impl FileLoader for MockFileLoader {
 }
 
 fn make_change() -> Change {
-    Change {
+    Change::ReplaceText {
         span: Span::new(Row::new_zero_indexed(1),
                         Row::new_zero_indexed(1),
                         Column::new_zero_indexed(1),
@@ -38,7 +38,7 @@ fn make_change() -> Change {
 }
 
 fn make_change_2() -> Change {
-    Change {
+    Change::ReplaceText {
         span: Span::new(Row::new_zero_indexed(2),
                         Row::new_zero_indexed(3),
                         Column::new_zero_indexed(4),
@@ -101,6 +101,20 @@ fn test_changes() {
     assert!(files.len() == 2);
     assert!(files[&PathBuf::from("foo")] == "foo\nHfooo\nWorlaye carumballo, World!\n");
     assert!(vfs.load_file(&Path::new("foo")) == Ok("foo\nHfooo\nWorlaye carumballo, World!\n".to_owned()));
+}
+
+#[test]
+fn test_change_add_file() {
+    let vfs = VfsInternal::<MockFileLoader, ()>::new();
+    let new_file = Change::AddFile {
+        file: PathBuf::from("foo"),
+        text: "Hello, World!".to_owned(),
+    };
+    vfs.on_changes(&[new_file]).unwrap();
+
+    let files = vfs.get_cached_files();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[&PathBuf::from("foo")], "Hello, World!");
 }
 
 #[test]
