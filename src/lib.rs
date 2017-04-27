@@ -421,8 +421,19 @@ impl<U> File<U> {
 
                         let byte_start = self.line_indices[span.range.row_start.0 as usize] +
                             byte_in_str(first_line, span.range.col_start).unwrap() as u32;
-                        let byte_end = self.line_indices[span.range.row_end.0 as usize] +
-                            byte_in_str(last_line, span.range.col_end).unwrap() as u32;
+                        let byte_end = if let Some(len) = span.range.len {
+                            // NOTE: The rest of the file is treated as a continous line here, so we
+                            // can use the `bytes_in_str` method to count up the bytes instead of
+                            // rolling our own. Counting up is neccessary since there might be
+                            // characters that span multiple bytes
+                            byte_start
+                                + byte_in_str(&self.text[byte_start as usize..], span::Column::new_zero_indexed(len as u32)).unwrap() as u32
+                        } else {
+                            // if we don't have a range set, use the `end` position instead.
+                            self.line_indices[span.range.row_end.0 as usize] +
+                                byte_in_str(last_line, span.range.col_end).unwrap() as u32
+                        };
+
                         (byte_start, byte_end)
                     };
                     let mut new_text = self.text[..range.0 as usize].to_owned();
