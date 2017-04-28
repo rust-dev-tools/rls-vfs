@@ -40,6 +40,12 @@ pub enum Change {
     ReplaceText {
         /// Span of the text to be replaced defined in col/row terms.
         span: Span,
+        /// Length in chars of the text to be replaced. If present,
+        /// used to calculate replacement range instead of
+        /// span's row_end/col_end fields. Needed for editors that
+        /// can't properly calculate the latter fields.
+        /// Span's row_start/col_start are still assumed valid.
+        len: Option<u64>,
         /// Text to replace specified text range with.
         text: String,
     },
@@ -416,15 +422,27 @@ impl<U> File<U> {
     fn make_change(&mut self, changes: &[&Change]) -> Result<(), Error> {
         for c in changes {
             let new_text = match **c {
-                Change::ReplaceText { ref span, ref text } => {
+                Change::ReplaceText { ref span, ref len, ref text } => {
                     let range = {
                         let first_line = self.load_line(span.range.row_start).unwrap();
-                        let last_line = self.load_line(span.range.row_end).unwrap();
-
                         let byte_start = self.line_indices[span.range.row_start.0 as usize] +
                             byte_in_str(first_line, span.range.col_start).unwrap() as u32;
-                        let byte_end = self.line_indices[span.range.row_end.0 as usize] +
-                            byte_in_str(last_line, span.range.col_end).unwrap() as u32;
+
+                        let byte_end = if let &Some(len) = len {
+                            // if `len` exists, the replaced portion of text
+                            // is `len` chars starting from row_start/col_start.
+                            byte_start + byte_in_str(
+                                &self.text[byte_start as usize..],
+                                span::Column::new_zero_indexed(len as u32)
+                            ).unwrap() as u32
+                        } else {
+                            // if no `len`, fall back to using row_end/col_end
+                            // for determining the tail end of replaced text.
+                            let last_line = self.load_line(span.range.row_end).unwrap();
+                            self.line_indices[span.range.row_end.0 as usize] +
+                                byte_in_str(last_line, span.range.col_end).unwrap() as u32
+                        };
+
                         (byte_start, byte_end)
                     };
                     let mut new_text = self.text[..range.0 as usize].to_owned();
