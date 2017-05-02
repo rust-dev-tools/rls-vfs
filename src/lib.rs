@@ -38,7 +38,9 @@ pub enum Change {
     },
     /// Changes in-memory contents of the previously added file.
     ReplaceText {
+        /// Span of the text to be replaced defined in col/row terms.
         span: Span,
+        /// Text to replace specified text range with.
         text: String,
     },
 }
