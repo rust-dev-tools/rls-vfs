@@ -26,43 +26,66 @@ impl FileLoader for MockFileLoader {
     }
 }
 
-fn make_change() -> Change {
+fn make_change(with_len: bool) -> Change {
+    let (row_end, col_end, len) = if with_len {
+        // If len is present, we shouldn't depend on row_end/col_end
+        // at all, because they may be invalid.
+        (0, 0, Some(3))
+    } else {
+        (1, 4, None)
+    };
     Change::ReplaceText {
         span: Span::new(Row::new_zero_indexed(1),
-                        Row::new_zero_indexed(1),
+                        Row::new_zero_indexed(row_end),
                         Column::new_zero_indexed(1),
-                        Column::new_zero_indexed(4),
+                        Column::new_zero_indexed(col_end),
                         "foo"),
-        len: None,
+        len: len,
         text: "foo".to_owned(),
     }
 }
 
-fn make_change_2() -> Change {
+fn make_change_2(with_len: bool) -> Change {
+    let (row_end, col_end, len) = if with_len {
+        // If len is present, we shouldn't depend on row_end/col_end
+        // at all, because they may be invalid.
+        (0, 0, Some(4))
+    } else {
+        (3, 2, None)
+    };
     Change::ReplaceText {
         span: Span::new(Row::new_zero_indexed(2),
-                        Row::new_zero_indexed(3),
+                        Row::new_zero_indexed(row_end),
                         Column::new_zero_indexed(4),
-                        Column::new_zero_indexed(2),
+                        Column::new_zero_indexed(col_end),
                         "foo"),
-        len: None,
+        len: len,
         text: "aye carumba".to_owned(),
     }
 }
 
-#[test]
-fn test_has_changes() {
+fn test_has_changes(with_len: bool) {
     let vfs = VfsInternal::<MockFileLoader, ()>::new();
 
     assert!(!vfs.has_changes());
     vfs.load_file(&Path::new("foo")).unwrap();
     assert!(!vfs.has_changes());
-    vfs.on_changes(&[make_change()]).unwrap();
+    vfs.on_changes(&[make_change(with_len)]).unwrap();
     assert!(vfs.has_changes());
     vfs.file_saved(&Path::new("bar")).unwrap();
     assert!(vfs.has_changes());
     vfs.file_saved(&Path::new("foo")).unwrap();
     assert!(!vfs.has_changes());
+}
+
+#[test]
+fn test_has_changes_without_len() {
+    test_has_changes(false)
+}
+
+#[test]
+fn test_has_changes_with_len() {
+    test_has_changes(true)
 }
 
 #[test]
@@ -87,22 +110,31 @@ fn test_flush_file() {
     assert!(vfs.get_cached_files().is_empty());
 }
 
-#[test]
-fn test_changes() {
+fn test_changes(with_len: bool) {
     let vfs = VfsInternal::<MockFileLoader, ()>::new();
 
-    vfs.on_changes(&[make_change()]).unwrap();
+    vfs.on_changes(&[make_change(with_len)]).unwrap();
     let files = vfs.get_cached_files();
     assert!(files.len() == 1);
     assert!(files[&PathBuf::from("foo")] == "foo\nHfooo\nWorld\nHello, World!\n");
     assert!(vfs.load_file(&Path::new("foo")) == Ok("foo\nHfooo\nWorld\nHello, World!\n".to_owned()));
     assert!(vfs.load_file(&Path::new("bar")) == Ok("bar\nHello\nWorld\nHello, World!\n".to_owned()));
 
-    vfs.on_changes(&[make_change_2()]).unwrap();
+    vfs.on_changes(&[make_change_2(with_len)]).unwrap();
     let files = vfs.get_cached_files();
     assert!(files.len() == 2);
     assert!(files[&PathBuf::from("foo")] == "foo\nHfooo\nWorlaye carumballo, World!\n");
     assert!(vfs.load_file(&Path::new("foo")) == Ok("foo\nHfooo\nWorlaye carumballo, World!\n".to_owned()));
+}
+
+#[test]
+fn test_changes_without_len() {
+    test_changes(false)
+}
+
+#[test]
+fn test_changes_with_len() {
+    test_changes(true)
 }
 
 #[test]
@@ -119,8 +151,7 @@ fn test_change_add_file() {
     assert_eq!(files[&PathBuf::from("foo")], "Hello, World!");
 }
 
-#[test]
-fn test_user_data() {
+fn test_user_data(with_len: bool) {
     let vfs = VfsInternal::<MockFileLoader, i32>::new();
 
     // New files have no user data.
@@ -198,7 +229,7 @@ fn test_user_data() {
 
     // Recording a change should clear user data.
     vfs.set_user_data(&Path::new("foo"), Some(42)).unwrap();
-    vfs.on_changes(&[make_change()]).unwrap();
+    vfs.on_changes(&[make_change(with_len)]).unwrap();
     vfs.with_user_data(&Path::new("foo"), |u| {
         assert_eq!(u, Err(Error::NoUserDataForFile));
         Ok(())
@@ -206,15 +237,34 @@ fn test_user_data() {
 }
 
 #[test]
-fn test_write() {
+fn test_user_data_without_len() {
+    test_user_data(false)
+}
+
+#[test]
+fn test_user_data_with_len() {
+    test_user_data(true)
+}
+
+fn test_write(with_len: bool) {
     let vfs = VfsInternal::<MockFileLoader, ()>::new();
 
-    vfs.on_changes(&[make_change()]).unwrap();
+    vfs.on_changes(&[make_change(with_len)]).unwrap();
     vfs.write_file(&Path::new("foo")).unwrap();
     let files = vfs.get_cached_files();
     assert!(files.len() == 1);
     let files = vfs.get_changes();
     assert!(files.is_empty());
+}
+
+#[test]
+fn test_write_without_len() {
+    test_write(false)
+}
+
+#[test]
+fn test_write_with_len() {
+    test_write(true)
 }
 
 #[test]
