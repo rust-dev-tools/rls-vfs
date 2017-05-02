@@ -33,6 +33,7 @@ fn make_change() -> Change {
                         Column::new_zero_indexed(1),
                         Column::new_zero_indexed(4),
                         "foo"),
+        len: None,
         text: "foo".to_owned(),
     }
 }
@@ -44,6 +45,7 @@ fn make_change_2() -> Change {
                         Column::new_zero_indexed(4),
                         Column::new_zero_indexed(2),
                         "foo"),
+        len: None,
         text: "aye carumba".to_owned(),
     }
 }
