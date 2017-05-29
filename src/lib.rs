@@ -78,6 +78,8 @@ pub enum Error {
     NoUserDataForFile,
     /// Wrong kind of file.
     BadFileKind,
+    /// An internal error - a bug in the VFS.
+    InternalError(&'static str),
 }
 
 impl ::std::error::Error for Error {
@@ -92,6 +94,7 @@ impl ::std::error::Error for Error {
             Error::FileNotCached => "requested file was not cached in the VFS",
             Error::NoUserDataForFile => "file is cached but there is no user data for it",
             Error::BadFileKind => "file is not the correct kind for the operation (e.g., text op on binary file)",
+            Error::InternalError(_) => "internal error",
         }
     }
 }
@@ -111,6 +114,9 @@ impl fmt::Display for Error {
             Error::UncommittedChanges(ref path_buf) => {
                 write!(f, "{} has uncommitted changes", path_buf.display())
             },
+            Error::InternalError(e) => {
+                write!(f, "internal error: {}", e)
+            }
             Error::BadLocation
             | Error::FileNotCached
             | Error::NoUserDataForFile
@@ -546,15 +552,14 @@ impl<U> File<U> {
 }
 
 impl TextFile {
-    // TODO errors for unwraps
     fn make_change(&mut self, changes: &[&Change]) -> Result<(), Error> {
         for c in changes {
             let new_text = match **c {
                 Change::ReplaceText { ref span, ref len, ref text } => {
                     let range = {
-                        let first_line = self.load_line(span.range.row_start).unwrap();
+                        let first_line = self.load_line(span.range.row_start)?;
                         let byte_start = self.line_indices[span.range.row_start.0 as usize] +
-                            byte_in_str(first_line, span.range.col_start).unwrap() as u32;
+                            byte_in_str(first_line, span.range.col_start)? as u32;
 
                         let byte_end = if let &Some(len) = len {
                             // if `len` exists, the replaced portion of text
@@ -562,13 +567,13 @@ impl TextFile {
                             byte_start + byte_in_str(
                                 &self.text[byte_start as usize..],
                                 span::Column::new_zero_indexed(len as u32)
-                            ).unwrap() as u32
+                            )? as u32
                         } else {
                             // if no `len`, fall back to using row_end/col_end
                             // for determining the tail end of replaced text.
-                            let last_line = self.load_line(span.range.row_end).unwrap();
+                            let last_line = self.load_line(span.range.row_end)?;
                             self.line_indices[span.range.row_end.0 as usize] +
-                                byte_in_str(last_line, span.range.col_end).unwrap() as u32
+                                byte_in_str(last_line, span.range.col_end)? as u32
                         };
 
                         (byte_start, byte_end)
@@ -633,16 +638,16 @@ impl TextFile {
 }
 
 // c is a character offset, returns a byte offset
-fn byte_in_str(s: &str, c: span::Column<span::ZeroIndexed>) -> Option<usize> {
+fn byte_in_str(s: &str, c: span::Column<span::ZeroIndexed>) -> Result<usize, Error> {
     // We simulate a null-terminated string here because spans are exclusive at
     // the top, and so that index might be outside the length of the string.
     for (i, (b, _)) in s.char_indices().chain(Some((s.len(), '\0')).into_iter()).enumerate() {
         if c.0 as usize == i {
-            return Some(b);
+            return Ok(b);
         }
     }
 
-    return None;
+    return Err(Error::InternalError("Out of bounds access in `byte_in_str`"));
 }
 
 trait FileLoader {
