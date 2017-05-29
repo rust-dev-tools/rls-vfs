@@ -175,6 +175,10 @@ impl<U> Vfs<U> {
         self.0.load_line(path, line)
     }
 
+    pub fn load_lines(&self, path: &Path, line_start: span::Row<span::ZeroIndexed>, line_end: span::Row<span::ZeroIndexed>) -> Result<String, Error> {
+        self.0.load_lines(path, line_start, line_end)
+    }
+
     pub fn write_file(&self, path: &Path) -> Result<(), Error> {
         self.0.write_file(path)
     }
@@ -316,6 +320,13 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
         Self::ensure_file(&mut files, path)?;
 
         files[path].load_line(line).map(|s| s.to_owned())
+    }
+
+    pub fn load_lines(&self, path: &Path, line_start: span::Row<span::ZeroIndexed>, line_end: span::Row<span::ZeroIndexed>) -> Result<String, Error> {
+        let mut files = self.files.lock().unwrap();
+        Self::ensure_file(&mut files, path)?;
+
+        files[path].load_lines(line_start, line_end).map(|s| s.to_owned())
     }
 
     fn load_file(&self, path: &Path) -> Result<FileContents, Error> {
@@ -487,6 +498,13 @@ impl<U> File<U> {
         }
     }
 
+    fn load_lines(&self, line_start: span::Row<span::ZeroIndexed>, line_end: span::Row<span::ZeroIndexed>) -> Result<&str, Error> {
+        match self.kind {
+            FileKind::Text(ref t) => t.load_lines(line_start, line_end),
+            FileKind::Binary(_) => Err(Error::BadFileKind),
+        }
+    }
+
     fn changed(&self) -> bool {
         match self.kind {
             FileKind::Text(ref t) => t.changed,
@@ -552,6 +570,23 @@ impl TextFile {
 
         if (end as usize) <= self.text.len() && start <= end {
             Ok(&self.text[start as usize .. end as usize])
+        } else {
+            Err(Error::BadLocation)
+        }
+    }
+
+    fn load_lines(&self, line_start: span::Row<span::ZeroIndexed>, line_end: span::Row<span::ZeroIndexed>) -> Result<&str, Error> {
+        let line_start = line_start.0 as usize;
+        let mut line_end = line_end.0 as usize;
+        if line_end >= self.line_indices.len() {
+            line_end = self.line_indices.len() - 1;
+        }
+
+        let start = (*try_opt_loc!(self.line_indices.get(line_start))) as usize;
+        let end = (*try_opt_loc!(self.line_indices.get(line_end))) as usize;
+
+        if (end) <= self.text.len() && start <= end {
+            Ok(&self.text[start..end])
         } else {
             Err(Error::BadLocation)
         }
