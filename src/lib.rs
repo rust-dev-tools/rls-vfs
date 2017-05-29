@@ -1,4 +1,5 @@
 #![feature(type_ascription)]
+#![feature(conservative_impl_trait)]
 
 extern crate rls_span as span;
 
@@ -179,6 +180,12 @@ impl<U> Vfs<U> {
         self.0.load_lines(path, line_start, line_end)
     }
 
+    pub fn for_each_line<F>(&self, path: &Path, f: F) -> Result<(), Error>
+        where F: FnMut(&str, usize) -> Result<(), Error>
+    {
+        self.0.for_each_line(path, f)
+    }
+
     pub fn write_file(&self, path: &Path) -> Result<(), Error> {
         self.0.write_file(path)
     }
@@ -322,11 +329,20 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
         files[path].load_line(line).map(|s| s.to_owned())
     }
 
-    pub fn load_lines(&self, path: &Path, line_start: span::Row<span::ZeroIndexed>, line_end: span::Row<span::ZeroIndexed>) -> Result<String, Error> {
+    fn load_lines(&self, path: &Path, line_start: span::Row<span::ZeroIndexed>, line_end: span::Row<span::ZeroIndexed>) -> Result<String, Error> {
         let mut files = self.files.lock().unwrap();
         Self::ensure_file(&mut files, path)?;
 
         files[path].load_lines(line_start, line_end).map(|s| s.to_owned())
+    }
+
+    fn for_each_line<F>(&self, path: &Path, f: F) -> Result<(), Error>
+        where F: FnMut(&str, usize) -> Result<(), Error>
+    {
+        let mut files = self.files.lock().unwrap();
+        Self::ensure_file(&mut files, path)?;
+
+        files[path].for_each_line(f)
     }
 
     fn load_file(&self, path: &Path) -> Result<FileContents, Error> {
@@ -505,6 +521,15 @@ impl<U> File<U> {
         }
     }
 
+    fn for_each_line<F>(&self, f: F) -> Result<(), Error>
+        where F: FnMut(&str, usize) -> Result<(), Error>
+    {
+        match self.kind {
+            FileKind::Text(ref t) => t.for_each_line(f),
+            FileKind::Binary(_) => Err(Error::BadFileKind),
+        }
+    }
+
     fn changed(&self) -> bool {
         match self.kind {
             FileKind::Text(ref t) => t.changed,
@@ -590,6 +615,20 @@ impl TextFile {
         } else {
             Err(Error::BadLocation)
         }
+    }
+
+    fn for_each_line<F>(&self, mut f: F) -> Result<(), Error>
+        where F: FnMut(&str, usize) -> Result<(), Error>
+    {
+        let mut line_iter = self.line_indices.iter();
+        let mut start = *line_iter.next().unwrap() as usize;
+        for (i, idx) in line_iter.enumerate() {
+            let idx = *idx as usize;
+            f(&self.text[start..idx], i)?;
+            start = idx;
+        }
+
+        Ok(())
     }
 }
 
