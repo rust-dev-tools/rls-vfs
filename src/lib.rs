@@ -8,8 +8,10 @@ use std::fmt;
 use std::fs;
 use std::io::Read;
 use std::marker::PhantomData;
+use std::mem;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::thread::{self, Thread};
 
 #[cfg(feature = "racer-impls")]
 mod racer_impls;
@@ -219,8 +221,12 @@ impl<U> Vfs<U> {
     }
 }
 
+// Important invariants! If you are going to lock both files and pending_files,
+// you must lock pending_files first.
+// You must have both locks to insert or remove files.
 struct VfsInternal<T, U> {
     files: Mutex<HashMap<PathBuf, File<U>>>,
+    pending_files: Mutex<HashMap<PathBuf, Vec<Thread>>>,
     loader: PhantomData<T>,
 }
 
@@ -228,13 +234,22 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
     fn new() -> VfsInternal<T, U> {
         VfsInternal {
             files: Mutex::new(HashMap::new()),
+            pending_files: Mutex::new(HashMap::new()),
             loader: PhantomData,
         }
     }
 
     fn clear(&self) {
+        let mut pending_files = self.pending_files.lock().unwrap();
         let mut files = self.files.lock().unwrap();
         *files = HashMap::new();
+        let mut new_pending_files = HashMap::new();
+        mem::swap(&mut *pending_files, &mut new_pending_files);
+        for ts in new_pending_files.values() {
+            for t in ts {
+                t.unpark();
+            }
+        }
     }
 
     fn file_saved(&self, path: &Path) -> Result<(), Error> {
@@ -249,9 +264,17 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
     }
 
     fn flush_file(&self, path: &Path) -> Result<(), Error> {
-        let mut files = self.files.lock().unwrap();
-        files.remove(path);
-        Ok(())
+        loop {
+            let mut pending_files = self.pending_files.lock().unwrap();
+            let mut files = self.files.lock().unwrap();
+            if !pending_files.contains_key(path) {
+               files.remove(path);
+               return Ok(());
+            }
+
+            pending_files.get_mut(path).unwrap().push(thread::current());
+            thread::park();
+        }
     }
 
     fn file_is_synced(&self, path: &Path) -> Result<bool, Error> {
@@ -299,8 +322,17 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
             user_data: None,
         };
 
-        let mut files = self.files.lock().unwrap();
-        files.insert(path.to_owned(), file);
+        loop {
+            let mut pending_files = self.pending_files.lock().unwrap();
+            let mut files = self.files.lock().unwrap();
+            if !pending_files.contains_key(path) {
+               files.insert(path.to_owned(), file);
+               return;
+            }
+
+            pending_files.get_mut(path).unwrap().push(thread::current());
+            thread::park();
+        }
     }
 
     fn get_cached_files(&self) -> HashMap<PathBuf, String> {
@@ -329,42 +361,63 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
     }
 
     fn load_line(&self, path: &Path, line: span::Row<span::ZeroIndexed>) -> Result<String, Error> {
-        let mut files = self.files.lock().unwrap();
-        Self::ensure_file(&mut files, path)?;
-
-        files[path].load_line(line).map(|s| s.to_owned())
+        self.ensure_file(path, |f| {
+            f.load_line(line).map(|s| s.to_owned())
+        })
     }
 
     fn load_lines(&self, path: &Path, line_start: span::Row<span::ZeroIndexed>, line_end: span::Row<span::ZeroIndexed>) -> Result<String, Error> {
-        let mut files = self.files.lock().unwrap();
-        Self::ensure_file(&mut files, path)?;
+        self.ensure_file(path, |f| {
+            f.load_lines(line_start, line_end).map(|s| s.to_owned())
+        })
 
-        files[path].load_lines(line_start, line_end).map(|s| s.to_owned())
     }
 
     fn for_each_line<F>(&self, path: &Path, f: F) -> Result<(), Error>
         where F: FnMut(&str, usize) -> Result<(), Error>
     {
-        let mut files = self.files.lock().unwrap();
-        Self::ensure_file(&mut files, path)?;
-
-        files[path].for_each_line(f)
+        self.ensure_file(path, |file| {
+            file.for_each_line(f)
+        })
     }
 
     fn load_file(&self, path: &Path) -> Result<FileContents, Error> {
-        let mut files = self.files.lock().unwrap();
-        Self::ensure_file(&mut files, path)?;
-
-        Ok(files[path].contents())
+        self.ensure_file(path, |f| {
+            Ok(f.contents())
+        })
     }
 
-    fn ensure_file(files: &mut HashMap<PathBuf, File<U>>, path: &Path) -> Result<(), Error>{
-        if !files.contains_key(path) {
-            // TODO we should not hold the lock while we read from disk
-            let file = T::read(path)?;
-            files.insert(path.to_path_buf(), file);
+    fn ensure_file<F, R>(&self, path: &Path, f: F) -> Result<R, Error>
+        where F: FnOnce(&File<U>) -> Result<R, Error>
+    {
+        loop {
+            let mut pending_files = self.pending_files.lock().unwrap();
+            let files = self.files.lock().unwrap();
+            if files.contains_key(path) {
+                return f(&files[path]);
+            }
+            if !pending_files.contains_key(path) {
+                pending_files.insert(path.to_owned(), vec![]);
+                break;
+            }
+            pending_files.get_mut(path).unwrap().push(thread::current());
+            thread::park();
         }
-        Ok(())
+
+        // We should not hold the locks while we read from disk.
+
+        let file = T::read(path)?;
+
+        // Need to re-get the locks here.
+        let mut pending_files = self.pending_files.lock().unwrap();
+        let mut files = self.files.lock().unwrap();
+        files.insert(path.to_owned(), file);
+        let ts = pending_files.remove(path).unwrap();
+        for t in ts {
+            t.unpark();
+        }
+
+        f(&files[path])
     }
 
     fn write_file(&self, path: &Path) -> Result<(), Error> {

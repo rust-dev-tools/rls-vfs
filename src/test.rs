@@ -16,7 +16,7 @@ impl FileLoader for MockFileLoader {
         })
     }
 
-    fn write<U>(file_name: &Path, file: &File<U>) -> Result<(), Error> {
+    fn write(file_name: &Path, file: &FileKind) -> Result<(), Error> {
         if file_name.display().to_string() == "foo" {
             assert_eq!(file.changed, true);
             assert_eq!(file.text, "foo\nHfooo\nWorld\nHello, World!\n");
