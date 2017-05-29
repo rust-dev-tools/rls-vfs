@@ -368,18 +368,21 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
     }
 
     fn write_file(&self, path: &Path) -> Result<(), Error> {
-        let mut files = self.files.lock().unwrap();
-        match files.get_mut(path) {
-            Some(ref mut f) => {
-                // TODO drop the lock on files
-                T::write(path, f)?;
-                if let FileKind::Text(ref mut f) = f.kind {
-                    f.changed = false;
+        let file = {
+            let mut files = self.files.lock().unwrap();
+            match files.get_mut(path) {
+                Some(f) => {
+                    if let FileKind::Text(ref mut f) = f.kind {
+                        f.changed = false;
+                    }
+                    f.kind.clone()
                 }
-                Ok(())
+                None => return Err(Error::FileNotCached),
             }
-            None => Err(Error::FileNotCached),
-        }
+        };
+
+        T::write(path, &file)?;
+        Ok(())
     }
 
     pub fn set_user_data(&self, path: &Path, data: Option<U>) -> Result<(), Error> {
@@ -473,9 +476,19 @@ fn make_line_indices(text: &str) -> Vec<u32> {
     result
 }
 
+#[derive(Clone)]
 enum FileKind {
     Text(TextFile),
     Binary(Vec<u8>),
+}
+
+impl FileKind {
+    fn as_bytes(&self) -> &[u8] {
+        match *self {
+            FileKind::Text(ref t) => t.text.as_bytes(),
+            FileKind::Binary(ref b) => b,
+        }
+    }    
 }
 
 pub enum FileContents {
@@ -483,6 +496,7 @@ pub enum FileContents {
     Binary(Vec<u8>),
 }
 
+#[derive(Clone)]
 struct TextFile {
     // FIXME(https://github.com/jonathandturner/rustls/issues/21) should use a rope.
     text: String,
@@ -540,13 +554,6 @@ impl<U> File<U> {
         match self.kind {
             FileKind::Text(ref t) => t.changed,
             FileKind::Binary(_) => false,
-        }
-    }
-
-    fn as_bytes(&self) -> &[u8] {
-        match self.kind {
-            FileKind::Text(ref t) => t.text.as_bytes(),
-            FileKind::Binary(ref b) => b,
         }
     }
 }
@@ -652,7 +659,7 @@ fn byte_in_str(s: &str, c: span::Column<span::ZeroIndexed>) -> Result<usize, Err
 
 trait FileLoader {
     fn read<U>(file_name: &Path) -> Result<File<U>, Error>;
-    fn write<U>(file_name: &Path, file: &File<U>) -> Result<(), Error>;
+    fn write(file_name: &Path, file: &FileKind) -> Result<(), Error>;
 }
 
 struct RealFileLoader;
@@ -684,7 +691,7 @@ impl FileLoader for RealFileLoader {
         }
     }
 
-    fn write<U>(file_name: &Path, file: &File<U>) -> Result<(), Error> {
+    fn write(file_name: &Path, file: &FileKind) -> Result<(), Error> {
         use std::io::Write;
 
         macro_rules! try_io {
