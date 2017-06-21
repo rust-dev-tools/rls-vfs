@@ -188,6 +188,10 @@ impl<U> Vfs<U> {
         self.0.load_lines(path, line_start, line_end)
     }
 
+    pub fn load_span(&self, span: span::Span<span::ZeroIndexed>) -> Result<String, Error> {
+        self.0.load_span(span)
+    }
+
     pub fn for_each_line<F>(&self, path: &Path, f: F) -> Result<(), Error>
         where F: FnMut(&str, usize) -> Result<(), Error>
     {
@@ -370,7 +374,12 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
         self.ensure_file(path, |f| {
             f.load_lines(line_start, line_end).map(|s| s.to_owned())
         })
+    }
 
+    fn load_span(&self, span: span::Span<span::ZeroIndexed>) -> Result<String, Error> {
+        self.ensure_file(&span.file, |f| {
+            f.load_range(span.range).map(|s| s.to_owned())
+        })
     }
 
     fn for_each_line<F>(&self, path: &Path, f: F) -> Result<(), Error>
@@ -594,6 +603,13 @@ impl<U> File<U> {
         }
     }
 
+    fn load_range(&self, range: span::Range<span::ZeroIndexed>) -> Result<&str, Error> {
+        match self.kind {
+            FileKind::Text(ref t) => t.load_range(range),
+            FileKind::Binary(_) => Err(Error::BadFileKind),
+        }
+    }
+
     fn for_each_line<F>(&self, f: F) -> Result<(), Error>
         where F: FnMut(&str, usize) -> Result<(), Error>
     {
@@ -674,6 +690,25 @@ impl TextFile {
 
         let start = (*try_opt_loc!(self.line_indices.get(line_start))) as usize;
         let end = (*try_opt_loc!(self.line_indices.get(line_end))) as usize;
+
+        if (end) <= self.text.len() && start <= end {
+            Ok(&self.text[start..end])
+        } else {
+            Err(Error::BadLocation)
+        }
+    }
+
+    fn load_range(&self, range: span::Range<span::ZeroIndexed>) -> Result<&str, Error> {
+        let line_start = range.row_start.0 as usize;
+        let mut line_end = range.row_end.0 as usize;
+        if line_end >= self.line_indices.len() {
+            line_end = self.line_indices.len() - 1;
+        }
+
+        let start = (*try_opt_loc!(self.line_indices.get(line_start))) as usize;
+        let start = start + range.col_start.0 as usize;
+        let end = (*try_opt_loc!(self.line_indices.get(line_end))) as usize;
+        let end = end + range.col_end.0 as usize;
 
         if (end) <= self.text.len() && start <= end {
             Ok(&self.text[start..end])
