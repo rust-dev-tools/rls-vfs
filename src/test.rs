@@ -35,11 +35,13 @@ fn make_change(with_len: bool) -> Change {
         (1, 4, None)
     };
     Change::ReplaceText {
-        span: Span::new(Row::new_zero_indexed(1),
-                        Row::new_zero_indexed(row_end),
-                        Column::new_zero_indexed(1),
-                        Column::new_zero_indexed(col_end),
-                        "foo"),
+        span: Span::new(
+            Row::new_zero_indexed(1),
+            Row::new_zero_indexed(row_end),
+            Column::new_zero_indexed(1),
+            Column::new_zero_indexed(col_end),
+            "foo",
+        ),
         len: len,
         text: "foo".to_owned(),
     }
@@ -54,11 +56,13 @@ fn make_change_2(with_len: bool) -> Change {
         (3, 2, None)
     };
     Change::ReplaceText {
-        span: Span::new(Row::new_zero_indexed(2),
-                        Row::new_zero_indexed(row_end),
-                        Column::new_zero_indexed(4),
-                        Column::new_zero_indexed(col_end),
-                        "foo"),
+        span: Span::new(
+            Row::new_zero_indexed(2),
+            Row::new_zero_indexed(row_end),
+            Column::new_zero_indexed(4),
+            Column::new_zero_indexed(col_end),
+            "foo",
+        ),
         len: len,
         text: "aye carumba".to_owned(),
     }
@@ -117,14 +121,21 @@ fn test_changes(with_len: bool) {
     let files = vfs.get_cached_files();
     assert!(files.len() == 1);
     assert!(files[&PathBuf::from("foo")] == "foo\nHfooo\nWorld\nHello, World!\n");
-    assert!(vfs.load_file(&Path::new("foo")) == Ok("foo\nHfooo\nWorld\nHello, World!\n".to_owned()));
-    assert!(vfs.load_file(&Path::new("bar")) == Ok("bar\nHello\nWorld\nHello, World!\n".to_owned()));
+    assert!(
+        vfs.load_file(&Path::new("foo")) == Ok("foo\nHfooo\nWorld\nHello, World!\n".to_owned())
+    );
+    assert!(
+        vfs.load_file(&Path::new("bar")) == Ok("bar\nHello\nWorld\nHello, World!\n".to_owned())
+    );
 
     vfs.on_changes(&[make_change_2(with_len)]).unwrap();
     let files = vfs.get_cached_files();
     assert!(files.len() == 2);
     assert!(files[&PathBuf::from("foo")] == "foo\nHfooo\nWorlaye carumballo, World!\n");
-    assert!(vfs.load_file(&Path::new("foo")) == Ok("foo\nHfooo\nWorlaye carumballo, World!\n".to_owned()));
+    assert!(
+        vfs.load_file(&Path::new("foo")) ==
+            Ok("foo\nHfooo\nWorlaye carumballo, World!\n".to_owned())
+    );
 }
 
 #[test]
@@ -167,16 +178,18 @@ fn test_user_data(with_len: bool) {
         assert_eq!(*u.unwrap().1, 42);
         Ok(())
     }).unwrap();
-    assert_eq!(vfs.set_user_data(&Path::new("bar"), Some(42)), Err(Error::FileNotCached));
+    assert_eq!(
+        vfs.set_user_data(&Path::new("bar"), Some(42)),
+        Err(Error::FileNotCached)
+    );
 
     // ensure_user_data should not be called if the userdata already exists.
-    vfs.ensure_user_data(&Path::new("foo"), |_| { panic!() }).unwrap();
+    vfs.ensure_user_data(&Path::new("foo"), |_| panic!())
+        .unwrap();
 
     // Test ensure_user_data is called.
     vfs.load_file(&Path::new("bar")).unwrap();
-    vfs.ensure_user_data(&Path::new("bar"), |_| {
-        Ok(1)
-    }).unwrap();
+    vfs.ensure_user_data(&Path::new("bar"), |_| Ok(1)).unwrap();
     vfs.with_user_data(&Path::new("bar"), |u| {
         assert_eq!(*u.unwrap().1, 1);
         Ok(())
@@ -192,10 +205,13 @@ fn test_user_data(with_len: bool) {
         assert_eq!(*u.unwrap().1, 43);
         Ok(())
     }).unwrap();
-    assert_eq!(vfs.with_user_data(&Path::new("foo"), |u| {
-        assert_eq!(*u.unwrap().1, 43);
-        Err(Error::BadLocation): Result<(), Error>
-    }), Err(Error::BadLocation));
+    assert_eq!(
+        vfs.with_user_data(&Path::new("foo"), |u| {
+            assert_eq!(*u.unwrap().1, 43);
+            Err(Error::BadLocation): Result<(), Error>
+        }),
+        Err(Error::BadLocation)
+    );
     vfs.with_user_data(&Path::new("foo"), |u| {
         assert_eq!(*u.unwrap().1, 43);
         Ok(())
@@ -210,9 +226,12 @@ fn test_user_data(with_len: bool) {
 
     // Compute (clear) and read data.
     vfs.set_user_data(&Path::new("foo"), Some(42)).unwrap();
-    assert_eq!(vfs.with_user_data(&Path::new("foo"), |_| {
-        Err(Error::NoUserDataForFile): Result<(), Error>
-    }), Err(Error::NoUserDataForFile));
+    assert_eq!(
+        vfs.with_user_data(&Path::new("foo"), |_| {
+            Err(Error::NoUserDataForFile): Result<(), Error>
+        }),
+        Err(Error::NoUserDataForFile)
+    );
     vfs.with_user_data(&Path::new("foo"), |u| {
         assert_eq!(u, Err(Error::NoUserDataForFile));
         Ok(())

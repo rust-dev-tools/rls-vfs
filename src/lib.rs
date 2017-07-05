@@ -35,10 +35,7 @@ type Span = span::Span<span::ZeroIndexed>;
 #[derive(Debug)]
 pub enum Change {
     /// Create an in-memory image of the file.
-    AddFile {
-        file: PathBuf,
-        text: String,
-    },
+    AddFile { file: PathBuf, text: String },
     /// Changes in-memory contents of the previously added file.
     ReplaceText {
         /// Span of the text to be replaced defined in col/row terms.
@@ -91,11 +88,13 @@ impl ::std::error::Error for Error {
             Error::Io(ref _path_buf, ref _message) => "io::Error reading or writing path",
             Error::UncommittedChanges(ref _path_buf) => {
                 "changes exist which have not been written to disk"
-            },
+            }
             Error::BadLocation => "client specified location not existing within a file",
             Error::FileNotCached => "requested file was not cached in the VFS",
             Error::NoUserDataForFile => "file is cached but there is no user data for it",
-            Error::BadFileKind => "file is not the correct kind for the operation (e.g., text op on binary file)",
+            Error::BadFileKind => {
+                "file is not the correct kind for the operation (e.g., text op on binary file)"
+            }
             Error::InternalError(_) => "internal error",
         }
     }
@@ -112,19 +111,13 @@ impl fmt::Display for Error {
         match *self {
             Error::OutOfSync(ref path_buf) => {
                 write!(f, "file {} out of sync with filesystem", path_buf.display())
-            },
+            }
             Error::UncommittedChanges(ref path_buf) => {
                 write!(f, "{} has uncommitted changes", path_buf.display())
-            },
-            Error::InternalError(e) => {
-                write!(f, "internal error: {}", e)
             }
-            Error::BadLocation
-            | Error::FileNotCached
-            | Error::NoUserDataForFile
-            | Error::Io(_, _)
-            | Error::BadFileKind
-            => {
+            Error::InternalError(e) => write!(f, "internal error: {}", e),
+            Error::BadLocation | Error::FileNotCached | Error::NoUserDataForFile |
+            Error::Io(_, _) | Error::BadFileKind => {
                 f.write_str(::std::error::Error::description(self))
             }
         }
@@ -180,11 +173,20 @@ impl<U> Vfs<U> {
         self.0.load_file(path)
     }
 
-    pub fn load_line(&self, path: &Path, line: span::Row<span::ZeroIndexed>) -> Result<String, Error> {
+    pub fn load_line(
+        &self,
+        path: &Path,
+        line: span::Row<span::ZeroIndexed>,
+    ) -> Result<String, Error> {
         self.0.load_line(path, line)
     }
 
-    pub fn load_lines(&self, path: &Path, line_start: span::Row<span::ZeroIndexed>, line_end: span::Row<span::ZeroIndexed>) -> Result<String, Error> {
+    pub fn load_lines(
+        &self,
+        path: &Path,
+        line_start: span::Row<span::ZeroIndexed>,
+        line_end: span::Row<span::ZeroIndexed>,
+    ) -> Result<String, Error> {
         self.0.load_lines(path, line_start, line_end)
     }
 
@@ -193,7 +195,8 @@ impl<U> Vfs<U> {
     }
 
     pub fn for_each_line<F>(&self, path: &Path, f: F) -> Result<(), Error>
-        where F: FnMut(&str, usize) -> Result<(), Error>
+    where
+        F: FnMut(&str, usize) -> Result<(), Error>,
     {
         self.0.for_each_line(path, f)
     }
@@ -208,14 +211,16 @@ impl<U> Vfs<U> {
 
     // If f returns NoUserDataForFile, then the user data for the given file is erased.
     pub fn with_user_data<F, R>(&self, path: &Path, f: F) -> Result<R, Error>
-        where F: FnOnce(Result<(Option<&str>, &mut U), Error>) -> Result<R, Error>
+    where
+        F: FnOnce(Result<(Option<&str>, &mut U), Error>) -> Result<R, Error>,
     {
         self.0.with_user_data(path, f)
     }
 
     // If f returns NoUserDataForFile, then the user data for the given file is erased.
     pub fn ensure_user_data<F>(&self, path: &Path, f: F) -> Result<(), Error>
-        where F: FnOnce(Option<&str>) -> Result<U, Error>
+    where
+        F: FnOnce(Option<&str>) -> Result<U, Error>,
     {
         self.0.ensure_user_data(path, f)
     }
@@ -272,8 +277,8 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
             let mut pending_files = self.pending_files.lock().unwrap();
             let mut files = self.files.lock().unwrap();
             if !pending_files.contains_key(path) {
-               files.remove(path);
-               return Ok(());
+                files.remove(path);
+                return Ok(());
             }
 
             pending_files.get_mut(path).unwrap().push(thread::current());
@@ -330,8 +335,8 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
             let mut pending_files = self.pending_files.lock().unwrap();
             let mut files = self.files.lock().unwrap();
             if !pending_files.contains_key(path) {
-               files.insert(path.to_owned(), file);
-               return;
+                files.insert(path.to_owned(), file);
+                return;
             }
 
             pending_files.get_mut(path).unwrap().push(thread::current());
@@ -341,22 +346,24 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
 
     fn get_cached_files(&self) -> HashMap<PathBuf, String> {
         let files = self.files.lock().unwrap();
-        files.iter().filter_map(|(p, f)| {
-            match f.kind {
+        files
+            .iter()
+            .filter_map(|(p, f)| match f.kind {
                 FileKind::Text(ref f) => Some((p.clone(), f.text.clone())),
                 FileKind::Binary(_) => None,
-            }
-        }).collect()
+            })
+            .collect()
     }
 
     fn get_changes(&self) -> HashMap<PathBuf, String> {
         let files = self.files.lock().unwrap();
-        files.iter().filter_map(|(p, f)| {
-            match f.kind {
+        files
+            .iter()
+            .filter_map(|(p, f)| match f.kind {
                 FileKind::Text(ref f) if f.changed => Some((p.clone(), f.text.clone())),
                 _ => None,
-            }
-        }).collect()
+            })
+            .collect()
     }
 
     fn has_changes(&self) -> bool {
@@ -365,39 +372,41 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
     }
 
     fn load_line(&self, path: &Path, line: span::Row<span::ZeroIndexed>) -> Result<String, Error> {
-        self.ensure_file(path, |f| {
-            f.load_line(line).map(|s| s.to_owned())
-        })
+        self.ensure_file(path, |f| f.load_line(line).map(|s| s.to_owned()))
     }
 
-    fn load_lines(&self, path: &Path, line_start: span::Row<span::ZeroIndexed>, line_end: span::Row<span::ZeroIndexed>) -> Result<String, Error> {
+    fn load_lines(
+        &self,
+        path: &Path,
+        line_start: span::Row<span::ZeroIndexed>,
+        line_end: span::Row<span::ZeroIndexed>,
+    ) -> Result<String, Error> {
         self.ensure_file(path, |f| {
             f.load_lines(line_start, line_end).map(|s| s.to_owned())
         })
     }
 
     fn load_span(&self, span: span::Span<span::ZeroIndexed>) -> Result<String, Error> {
-        self.ensure_file(&span.file, |f| {
-            f.load_range(span.range).map(|s| s.to_owned())
-        })
+        self.ensure_file(
+            &span.file,
+            |f| f.load_range(span.range).map(|s| s.to_owned()),
+        )
     }
 
     fn for_each_line<F>(&self, path: &Path, f: F) -> Result<(), Error>
-        where F: FnMut(&str, usize) -> Result<(), Error>
+    where
+        F: FnMut(&str, usize) -> Result<(), Error>,
     {
-        self.ensure_file(path, |file| {
-            file.for_each_line(f)
-        })
+        self.ensure_file(path, |file| file.for_each_line(f))
     }
 
     fn load_file(&self, path: &Path) -> Result<FileContents, Error> {
-        self.ensure_file(path, |f| {
-            Ok(f.contents())
-        })
+        self.ensure_file(path, |f| Ok(f.contents()))
     }
 
     fn ensure_file<F, R>(&self, path: &Path, f: F) -> Result<R, Error>
-        where F: FnOnce(&File<U>) -> Result<R, Error>
+    where
+        F: FnOnce(&File<U>) -> Result<R, Error>,
     {
         loop {
             let mut pending_files = self.pending_files.lock().unwrap();
@@ -461,7 +470,8 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
     // Note that f should not be a long-running operation since we hold the lock
     // to the VFS while it runs.
     pub fn with_user_data<F, R>(&self, path: &Path, f: F) -> Result<R, Error>
-        where F: FnOnce(Result<(Option<&str>, &mut U), Error>) -> Result<R, Error>
+    where
+        F: FnOnce(Result<(Option<&str>, &mut U), Error>) -> Result<R, Error>,
     {
         let mut files = self.files.lock().unwrap();
         let file = match files.get_mut(path) {
@@ -488,7 +498,8 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
     }
 
     pub fn ensure_user_data<F>(&self, path: &Path, f: F) -> Result<(), Error>
-        where F: FnOnce(Option<&str>) -> Result<U, Error>
+    where
+        F: FnOnce(Option<&str>) -> Result<U, Error>,
     {
         let mut files = self.files.lock().unwrap();
         match files.get_mut(path) {
@@ -512,7 +523,7 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
                 } else {
                     Ok(())
                 }
-            },
+            }
             None => Err(Error::FileNotCached),
         }
     }
@@ -550,7 +561,7 @@ impl FileKind {
             FileKind::Text(ref t) => t.text.as_bytes(),
             FileKind::Binary(ref b) => b,
         }
-    }    
+    }
 }
 
 pub enum FileContents {
@@ -596,7 +607,11 @@ impl<U> File<U> {
         }
     }
 
-    fn load_lines(&self, line_start: span::Row<span::ZeroIndexed>, line_end: span::Row<span::ZeroIndexed>) -> Result<&str, Error> {
+    fn load_lines(
+        &self,
+        line_start: span::Row<span::ZeroIndexed>,
+        line_end: span::Row<span::ZeroIndexed>,
+    ) -> Result<&str, Error> {
         match self.kind {
             FileKind::Text(ref t) => t.load_lines(line_start, line_end),
             FileKind::Binary(_) => Err(Error::BadFileKind),
@@ -611,7 +626,8 @@ impl<U> File<U> {
     }
 
     fn for_each_line<F>(&self, f: F) -> Result<(), Error>
-        where F: FnMut(&str, usize) -> Result<(), Error>
+    where
+        F: FnMut(&str, usize) -> Result<(), Error>,
     {
         match self.kind {
             FileKind::Text(ref t) => t.for_each_line(f),
@@ -631,7 +647,11 @@ impl TextFile {
     fn make_change(&mut self, changes: &[&Change]) -> Result<(), Error> {
         for c in changes {
             let new_text = match **c {
-                Change::ReplaceText { ref span, ref len, ref text } => {
+                Change::ReplaceText {
+                    ref span,
+                    ref len,
+                    ref text,
+                } => {
                     let range = {
                         let first_line = self.load_line(span.range.row_start)?;
                         let byte_start = self.line_indices[span.range.row_start.0 as usize] +
@@ -640,10 +660,11 @@ impl TextFile {
                         let byte_end = if let &Some(len) = len {
                             // if `len` exists, the replaced portion of text
                             // is `len` chars starting from row_start/col_start.
-                            byte_start + byte_in_str(
-                                &self.text[byte_start as usize..],
-                                span::Column::new_zero_indexed(len as u32)
-                            )? as u32
+                            byte_start +
+                                byte_in_str(
+                                    &self.text[byte_start as usize..],
+                                    span::Column::new_zero_indexed(len as u32),
+                                )? as u32
                         } else {
                             // if no `len`, fall back to using row_end/col_end
                             // for determining the tail end of replaced text.
@@ -659,7 +680,7 @@ impl TextFile {
                     new_text.push_str(&self.text[range.1 as usize..]);
                     new_text
                 }
-                Change::AddFile { file: _, ref text } => text.to_owned()
+                Change::AddFile { file: _, ref text } => text.to_owned(),
             };
 
             self.text = new_text;
@@ -675,13 +696,17 @@ impl TextFile {
         let end = *try_opt_loc!(self.line_indices.get(line.0 as usize + 1));
 
         if (end as usize) <= self.text.len() && start <= end {
-            Ok(&self.text[start as usize .. end as usize])
+            Ok(&self.text[start as usize..end as usize])
         } else {
             Err(Error::BadLocation)
         }
     }
 
-    fn load_lines(&self, line_start: span::Row<span::ZeroIndexed>, line_end: span::Row<span::ZeroIndexed>) -> Result<&str, Error> {
+    fn load_lines(
+        &self,
+        line_start: span::Row<span::ZeroIndexed>,
+        line_end: span::Row<span::ZeroIndexed>,
+    ) -> Result<&str, Error> {
         let line_start = line_start.0 as usize;
         let mut line_end = line_end.0 as usize;
         if line_end >= self.line_indices.len() {
@@ -718,7 +743,8 @@ impl TextFile {
     }
 
     fn for_each_line<F>(&self, mut f: F) -> Result<(), Error>
-        where F: FnMut(&str, usize) -> Result<(), Error>
+    where
+        F: FnMut(&str, usize) -> Result<(), Error>,
     {
         let mut line_iter = self.line_indices.iter();
         let mut start = *line_iter.next().unwrap() as usize;
@@ -736,13 +762,18 @@ impl TextFile {
 fn byte_in_str(s: &str, c: span::Column<span::ZeroIndexed>) -> Result<usize, Error> {
     // We simulate a null-terminated string here because spans are exclusive at
     // the top, and so that index might be outside the length of the string.
-    for (i, (b, _)) in s.char_indices().chain(Some((s.len(), '\0')).into_iter()).enumerate() {
+    for (i, (b, _)) in s.char_indices()
+        .chain(Some((s.len(), '\0')).into_iter())
+        .enumerate()
+    {
         if c.0 as usize == i {
             return Ok(b);
         }
     }
 
-    return Err(Error::InternalError("Out of bounds access in `byte_in_str`"));
+    return Err(Error::InternalError(
+        "Out of bounds access in `byte_in_str`",
+    ));
 }
 
 trait FileLoader {
@@ -756,11 +787,19 @@ impl FileLoader for RealFileLoader {
     fn read<U>(file_name: &Path) -> Result<File<U>, Error> {
         let mut file = match fs::File::open(file_name) {
             Ok(f) => f,
-            Err(_) => return Err(Error::Io(Some(file_name.to_owned()), Some(format!("Could not open file: {}", file_name.display())))),
+            Err(_) => {
+                return Err(Error::Io(
+                    Some(file_name.to_owned()),
+                    Some(format!("Could not open file: {}", file_name.display())),
+                ))
+            }
         };
         let mut buf = vec![];
         if let Err(_) = file.read_to_end(&mut buf) {
-            return Err(Error::Io(Some(file_name.to_owned()), Some(format!("Could not read file: {}", file_name.display()))));
+            return Err(Error::Io(
+                Some(file_name.to_owned()),
+                Some(format!("Could not read file: {}", file_name.display())),
+            ));
         }
 
         match String::from_utf8(buf) {
@@ -775,7 +814,7 @@ impl FileLoader for RealFileLoader {
             Err(e) => Ok(File {
                 kind: FileKind::Binary(e.into_bytes()),
                 user_data: None,
-            })
+            }),
         }
     }
 
@@ -786,7 +825,9 @@ impl FileLoader for RealFileLoader {
             ($e:expr) => {
                 match $e {
                     Ok(e) => e,
-                    Err(e) => return Err(Error::Io(Some(file_name.to_owned()), Some(e.to_string()))),
+                    Err(e) => {
+                        return Err(Error::Io(Some(file_name.to_owned()), Some(e.to_string())));
+                    }
                 }
             }
         }
