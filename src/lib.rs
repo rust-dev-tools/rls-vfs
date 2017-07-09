@@ -423,16 +423,26 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
         }
 
         // We should not hold the locks while we read from disk.
-
-        let file = T::read(path)?;
+        let file = T::read(path);
 
         // Need to re-get the locks here.
         let mut pending_files = self.pending_files.lock().unwrap();
         let mut files = self.files.lock().unwrap();
-        files.insert(path.to_owned(), file);
-        let ts = pending_files.remove(path).unwrap();
-        for t in ts {
-            t.unpark();
+        match file {
+            Ok(file) => {
+                files.insert(path.to_owned(), file);
+                let ts = pending_files.remove(path).unwrap();
+                for t in ts {
+                    t.unpark();
+                }
+            }
+            Err(e) => {
+                let ts = pending_files.remove(path).unwrap();
+                for t in ts {
+                    t.unpark();
+                }
+                return Err(e);
+            }
         }
 
         f(&files[path])
