@@ -409,16 +409,18 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
         F: FnOnce(&File<U>) -> Result<R, Error>,
     {
         loop {
-            let mut pending_files = self.pending_files.lock().unwrap();
-            let files = self.files.lock().unwrap();
-            if files.contains_key(path) {
-                return f(&files[path]);
+            {
+                let mut pending_files = self.pending_files.lock().unwrap();
+                let files = self.files.lock().unwrap();
+                if files.contains_key(path) {
+                    return f(&files[path]);
+                }
+                if !pending_files.contains_key(path) {
+                    pending_files.insert(path.to_owned(), vec![]);
+                    break;
+                }
+                pending_files.get_mut(path).unwrap().push(thread::current());
             }
-            if !pending_files.contains_key(path) {
-                pending_files.insert(path.to_owned(), vec![]);
-                break;
-            }
-            pending_files.get_mut(path).unwrap().push(thread::current());
             thread::park();
         }
 
