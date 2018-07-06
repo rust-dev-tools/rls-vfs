@@ -1,4 +1,5 @@
-use super::{VfsInternal, Change, FileLoader, File, Error, make_line_indices};
+use super::{VfsInternal, Change, FileLoader, File, FileKind, FileContents,
+            Error, TextFile, make_line_indices};
 use Span;
 use span::{Row, Column};
 use std::path::{Path, PathBuf};
@@ -8,20 +9,25 @@ struct MockFileLoader;
 impl FileLoader for MockFileLoader {
     fn read<U>(file_name: &Path) -> Result<File<U>, Error> {
         let text = format!("{}\nHello\nWorld\nHello, World!\n", file_name.display());
-        Ok(File {
+        let text_file = TextFile {
             line_indices: make_line_indices(&text),
             text: text,
             changed: false,
+        };
+        Ok(File {
+            kind: FileKind::Text(text_file),
             user_data: None,
         })
     }
 
     fn write(file_name: &Path, file: &FileKind) -> Result<(), Error> {
-        if file_name.display().to_string() == "foo" {
-            assert_eq!(file.changed, true);
-            assert_eq!(file.text, "foo\nHfooo\nWorld\nHello, World!\n");
+        if let FileKind::Text(ref text_file) = *file  {
+            if file_name.display().to_string() == "foo" {
+                // TODO: is this test useful still?
+                assert_eq!(text_file.changed, false);
+                assert_eq!(text_file.text, "foo\nHfooo\nWorld\nHello, World!\n");
+            }
         }
-
         Ok(())
     }
 }
@@ -120,21 +126,23 @@ fn test_changes(with_len: bool) {
     vfs.on_changes(&[make_change(with_len)]).unwrap();
     let files = vfs.get_cached_files();
     assert!(files.len() == 1);
-    assert!(files[&PathBuf::from("foo")] == "foo\nHfooo\nWorld\nHello, World!\n");
-    assert!(
-        vfs.load_file(&Path::new("foo")) == Ok("foo\nHfooo\nWorld\nHello, World!\n".to_owned())
+    assert_eq!(files[&PathBuf::from("foo")], "foo\nHfooo\nWorld\nHello, World!\n");
+    assert_eq!(
+        vfs.load_file(&Path::new("foo")).unwrap(),
+        FileContents::Text("foo\nHfooo\nWorld\nHello, World!\n".to_owned()),
     );
-    assert!(
-        vfs.load_file(&Path::new("bar")) == Ok("bar\nHello\nWorld\nHello, World!\n".to_owned())
+    assert_eq!(
+        vfs.load_file(&Path::new("bar")).unwrap(),
+        FileContents::Text("bar\nHello\nWorld\nHello, World!\n".to_owned()),
     );
 
     vfs.on_changes(&[make_change_2(with_len)]).unwrap();
     let files = vfs.get_cached_files();
     assert!(files.len() == 2);
-    assert!(files[&PathBuf::from("foo")] == "foo\nHfooo\nWorlaye carumballo, World!\n");
-    assert!(
-        vfs.load_file(&Path::new("foo")) ==
-            Ok("foo\nHfooo\nWorlaye carumballo, World!\n".to_owned())
+    assert_eq!(files[&PathBuf::from("foo")], "foo\nHfooo\nWorlaye carumballo, World!\n");
+    assert_eq!(
+        vfs.load_file(&Path::new("foo")).unwrap(),
+        FileContents::Text("foo\nHfooo\nWorlaye carumballo, World!\n".to_owned()),
     );
 }
 
@@ -197,7 +205,7 @@ fn test_user_data(with_len: bool) {
 
     // compute and read data.
     vfs.with_user_data(&Path::new("foo"), |u| {
-        assert_eq!(u.as_ref().unwrap().0, "foo\nHello\nWorld\nHello, World!\n");
+        assert_eq!(u.as_ref().unwrap().0, Some("foo\nHello\nWorld\nHello, World!\n"));
         *u.unwrap().1 = 43;
         Ok(())
     }).unwrap();
