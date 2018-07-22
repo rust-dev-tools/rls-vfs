@@ -1,5 +1,4 @@
 #![feature(type_ascription)]
-#![feature(conservative_impl_trait)]
 
 extern crate rls_span as span;
 
