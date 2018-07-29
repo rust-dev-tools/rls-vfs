@@ -1,6 +1,6 @@
 [package]
 name = "rls-vfs"
-version = "0.4.6"
+version = "0.6.0"
 authors = ["Nick Cameron <ncameron@mozilla.com>"]
 description = "Virtual File System for the RLS"
 license = "Apache-2.0/MIT"
