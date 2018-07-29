@@ -12,9 +12,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::thread::{self, Thread};
 
-#[cfg(feature = "racer-impls")]
-mod racer_impls;
-
 #[cfg(test)]
 mod test;
 

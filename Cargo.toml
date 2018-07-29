@@ -9,7 +9,3 @@ categories = ["development-tools"]
 
 [dependencies]
 rls-span = "0.4"
-racer = { version = "2.1", optional = true }
-
-[features]
-racer-impls = ["racer"]
