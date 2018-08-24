@@ -1,3 +1,6 @@
+//! benchmark which uses libstd/path.rs
+//! make sure rust-src installed before running this bench
+
 #![feature(test)]
 extern crate rls_span;
 extern crate rls_vfs;
@@ -8,9 +11,18 @@ use rls_vfs::Change;
 use std::fs;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 struct EmptyUserData;
 type Vfs = rls_vfs::Vfs<EmptyUserData>;
+
+fn std_path() -> PathBuf {
+    let mut cmd = Command::new("rustc");
+    cmd.args(&["--print", "sysroot"]);
+    let op = cmd.output().unwrap();
+    let sysroot = Path::new(::std::str::from_utf8(&op.stdout).unwrap().trim());
+    sysroot.join("lib/rustlib/src/rust/src").to_owned()
+}
 
 fn add_file(vfs: &Vfs, path: &Path) {
     let mut buf = String::new();
@@ -52,7 +64,9 @@ fn make_insertion(path: &Path, start_line: usize) -> Change {
 
 fn prepare() -> (Vfs, PathBuf) {
     let vfs = Vfs::new();
-    let lib = Path::new("resources").join("path.rs").to_owned();
+    // path.rs is very long(about 4100 lines) so let's use it
+    let lib = std_path().join("libstd/path.rs");
+    println!("{:?}", lib);
     add_file(&vfs, &lib);
     (vfs, lib)
 }
