@@ -1,0 +1,14 @@
+language: rust
+
+rust:
+  - nightly
+
+cache: cargo
+
+before_script:
+  - rustup component add rust-src
+
+script:
+  - cargo build --verbose --all
+  - cargo test --verbose --all
+
