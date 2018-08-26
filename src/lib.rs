@@ -21,7 +21,7 @@ macro_rules! try_opt_loc {
             Some(e) => e,
             None => return Err(Error::BadLocation),
         }
-    }
+    };
 }
 
 pub struct Vfs<U = ()>(VfsInternal<RealFileLoader, U>);
@@ -112,10 +112,11 @@ impl fmt::Display for Error {
                 write!(f, "{} has uncommitted changes", path_buf.display())
             }
             Error::InternalError(e) => write!(f, "internal error: {}", e),
-            Error::BadLocation | Error::FileNotCached | Error::NoUserDataForFile |
-            Error::Io(_, _) | Error::BadFileKind => {
-                f.write_str(::std::error::Error::description(self))
-            }
+            Error::BadLocation
+            | Error::FileNotCached
+            | Error::NoUserDataForFile
+            | Error::Io(_, _)
+            | Error::BadFileKind => f.write_str(::std::error::Error::description(self)),
         }
     }
 }
@@ -347,8 +348,7 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
             .filter_map(|(p, f)| match f.kind {
                 FileKind::Text(ref f) => Some((p.clone(), f.text.clone())),
                 FileKind::Binary(_) => None,
-            })
-            .collect()
+            }).collect()
     }
 
     fn get_changes(&self) -> HashMap<PathBuf, String> {
@@ -358,8 +358,7 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
             .filter_map(|(p, f)| match f.kind {
                 FileKind::Text(ref f) if f.changed => Some((p.clone(), f.text.clone())),
                 _ => None,
-            })
-            .collect()
+            }).collect()
     }
 
     fn has_changes(&self) -> bool {
@@ -383,10 +382,9 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
     }
 
     fn load_span(&self, span: span::Span<span::ZeroIndexed>) -> Result<String, Error> {
-        self.ensure_file(
-            &span.file,
-            |f| f.load_range(span.range).map(|s| s.to_owned()),
-        )
+        self.ensure_file(&span.file, |f| {
+            f.load_range(span.range).map(|s| s.to_owned())
+        })
     }
 
     fn for_each_line<F>(&self, path: &Path, f: F) -> Result<(), Error>
@@ -572,6 +570,7 @@ impl FileKind {
     }
 }
 
+#[derive(Debug, PartialEq)]
 pub enum FileContents {
     Text(String),
     Binary(Vec<u8>),
@@ -662,23 +661,22 @@ impl TextFile {
                 } => {
                     let range = {
                         let first_line = self.load_line(span.range.row_start)?;
-                        let byte_start = self.line_indices[span.range.row_start.0 as usize] +
-                            byte_in_str(first_line, span.range.col_start)? as u32;
+                        let byte_start = self.line_indices[span.range.row_start.0 as usize]
+                            + byte_in_str(first_line, span.range.col_start)? as u32;
 
                         let byte_end = if let &Some(len) = len {
                             // if `len` exists, the replaced portion of text
                             // is `len` chars starting from row_start/col_start.
-                            byte_start +
-                                byte_in_str(
-                                    &self.text[byte_start as usize..],
-                                    span::Column::new_zero_indexed(len as u32),
-                                )? as u32
+                            byte_start + byte_in_str(
+                                &self.text[byte_start as usize..],
+                                span::Column::new_zero_indexed(len as u32),
+                            )? as u32
                         } else {
                             // if no `len`, fall back to using row_end/col_end
                             // for determining the tail end of replaced text.
                             let last_line = self.load_line(span.range.row_end)?;
-                            self.line_indices[span.range.row_end.0 as usize] +
-                                byte_in_str(last_line, span.range.col_end)? as u32
+                            self.line_indices[span.range.row_end.0 as usize]
+                                + byte_in_str(last_line, span.range.col_end)? as u32
                         };
 
                         (byte_start, byte_end)
@@ -770,7 +768,8 @@ impl TextFile {
 fn byte_in_str(s: &str, c: span::Column<span::ZeroIndexed>) -> Result<usize, Error> {
     // We simulate a null-terminated string here because spans are exclusive at
     // the top, and so that index might be outside the length of the string.
-    for (i, (b, _)) in s.char_indices()
+    for (i, (b, _)) in s
+        .char_indices()
         .chain(Some((s.len(), '\0')).into_iter())
         .enumerate()
     {
@@ -837,7 +836,7 @@ impl FileLoader for RealFileLoader {
                         return Err(Error::Io(Some(file_name.to_owned()), Some(e.to_string())));
                     }
                 }
-            }
+            };
         }
 
         let mut out = try_io!(::std::fs::File::create(file_name));
