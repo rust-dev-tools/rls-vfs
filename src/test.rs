@@ -1,8 +1,12 @@
-use super::{VfsInternal, Change, FileLoader, File, FileKind, FileContents,
-            Error, TextFile, make_line_indices};
-use Span;
-use span::{Row, Column};
 use std::path::{Path, PathBuf};
+
+use span::{Column, Position, Row};
+
+use super::{
+    make_line_indices, Change, Error, File, FileContents, FileKind, FileLoader, SpanAtom, TextFile,
+    VfsInternal,
+};
+use Span;
 
 struct MockFileLoader;
 
@@ -50,6 +54,7 @@ fn make_change(with_len: bool) -> Change {
         ),
         len: len,
         text: "foo".to_owned(),
+        atom: SpanAtom::UnicodeScalarValue,
     }
 }
 
@@ -71,6 +76,7 @@ fn make_change_2(with_len: bool) -> Change {
         ),
         len: len,
         text: "aye carumba".to_owned(),
+        atom: SpanAtom::UnicodeScalarValue,
     }
 }
 
@@ -304,4 +310,58 @@ fn test_clear() {
     assert!(vfs.get_cached_files().is_empty());
 }
 
-// TODO test with wide chars
+#[test]
+fn test_wide_utf8() {
+    let vfs = VfsInternal::<MockFileLoader, ()>::new();
+    let changes = [
+        Change::AddFile {
+            file: PathBuf::from("foo"),
+            text: String::from("😢"),
+        },
+        Change::ReplaceText {
+            span: Span::from_positions(
+                Position::new(Row::new_zero_indexed(0), Column::new_zero_indexed(0)),
+                Position::new(Row::new_zero_indexed(0), Column::new_zero_indexed(1)),
+                "foo",
+            ),
+            len: Some(1),
+            text: "".into(),
+            atom: SpanAtom::UnicodeScalarValue,
+        },
+    ];
+
+    vfs.on_changes(&changes).unwrap();
+
+    assert_eq!(
+        vfs.load_file(&Path::new("foo")).unwrap(),
+        FileContents::Text("".to_owned()),
+    );
+}
+
+#[test]
+fn test_wide_utf16() {
+    let vfs = VfsInternal::<MockFileLoader, ()>::new();
+    let changes = [
+        Change::AddFile {
+            file: PathBuf::from("foo"),
+            text: String::from("😢"),
+        },
+        Change::ReplaceText {
+            span: Span::from_positions(
+                Position::new(Row::new_zero_indexed(0), Column::new_zero_indexed(0)),
+                Position::new(Row::new_zero_indexed(0), Column::new_zero_indexed(2)),
+                "foo",
+            ),
+            len: Some(2),
+            text: "".into(),
+            atom: SpanAtom::Utf16CodeUnit,
+        },
+    ];
+
+    vfs.on_changes(&changes).unwrap();
+
+    assert_eq!(
+        vfs.load_file(&Path::new("foo")).unwrap(),
+        FileContents::Text("".to_owned()),
+    );
+}

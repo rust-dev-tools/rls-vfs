@@ -7,7 +7,7 @@ extern crate rls_vfs;
 extern crate test;
 
 use rls_span::{Column, Position, Row, Span};
-use rls_vfs::Change;
+use rls_vfs::{Change, SpanAtom};
 use std::fs;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
@@ -51,6 +51,7 @@ fn make_change_(path: &Path, start_line: usize, interval: usize) -> Change {
         span: Span::from_positions(start, end, path),
         len: None,
         text: buf,
+        atom: SpanAtom::UnicodeScalarValue,
     }
 }
 

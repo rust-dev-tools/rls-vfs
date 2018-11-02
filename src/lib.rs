@@ -31,6 +31,21 @@ pub struct Vfs<U = ()>(VfsInternal<RealFileLoader, U>);
 type Span = span::Span<span::ZeroIndexed>;
 
 #[derive(Debug)]
+/// Defines a smallest text unit that `Span`s operate with.
+pub enum SpanAtom {
+    /// `char` primitive
+    UnicodeScalarValue,
+    /// `u16` component in UTF-16 encoding
+    Utf16CodeUnit
+}
+
+impl Default for SpanAtom {
+    fn default() -> Self {
+        SpanAtom::UnicodeScalarValue
+    }
+}
+
+#[derive(Debug)]
 pub enum Change {
     /// Create an in-memory image of the file.
     AddFile { file: PathBuf, text: String },
@@ -44,6 +59,11 @@ pub enum Change {
         /// can't properly calculate the latter fields.
         /// Span's row_start/col_start are still assumed valid.
         len: Option<u64>,
+        /// Specifies the atom units used by `span` and `len`.
+        /// For example, a buffer of "😢" has a column span of 0 to 1 and length
+        /// equal to 1 with `SpanAtom::UnicodeScalarValue` but a column span
+        /// of 0 to 2 and length equal to 2 with `SpanAtom::Utf16CodeUnit`.
+        atom: SpanAtom,
         /// Text to replace specified text range with.
         text: String,
     },
@@ -663,7 +683,13 @@ impl TextFile {
                     ref span,
                     ref len,
                     ref text,
+                    ref atom,
                 } => {
+                    let byte_in_str = match atom {
+                        SpanAtom::UnicodeScalarValue => byte_in_str,
+                        SpanAtom::Utf16CodeUnit => byte_in_str_utf16,
+                    };
+
                     let range = {
                         let first_line = self.load_line(span.range.row_start)?;
                         let byte_start = self.line_indices[span.range.row_start.0 as usize]
@@ -769,7 +795,7 @@ impl TextFile {
     }
 }
 
-// c is a character offset, returns a byte offset
+/// Return a UTF-8 byte offset in `s` for a given UTF-8 unicode scalar value offset.
 fn byte_in_str(s: &str, c: span::Column<span::ZeroIndexed>) -> Result<usize, Error> {
     // We simulate a null-terminated string here because spans are exclusive at
     // the top, and so that index might be outside the length of the string.
@@ -785,6 +811,27 @@ fn byte_in_str(s: &str, c: span::Column<span::ZeroIndexed>) -> Result<usize, Err
 
     return Err(Error::InternalError(
         "Out of bounds access in `byte_in_str`",
+    ));
+}
+
+/// Return a UTF-8 byte offset in `s` for a given UTF-16 code unit offset.
+fn byte_in_str_utf16(s: &str, c: span::Column<span::ZeroIndexed>) -> Result<usize, Error> {
+    let (mut utf8_offset, mut utf16_offset) = (0, 0);
+    let target_utf16_offset = c.0 as usize;
+
+    for chr in s.chars().chain(std::iter::once('\0')) {
+        if utf16_offset > target_utf16_offset {
+            break;
+        } else if utf16_offset == target_utf16_offset {
+            return Ok(utf8_offset);
+        }
+
+        utf8_offset += chr.len_utf8();
+        utf16_offset += chr.len_utf16();
+    }
+
+    return Err(Error::InternalError(
+        "UTF-16 code unit offset is not at `str` char boundary",
     ));
 }
 
@@ -847,5 +894,23 @@ impl FileLoader for RealFileLoader {
         let mut out = try_io!(::std::fs::File::create(file_name));
         try_io!(out.write_all(file.as_bytes()));
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use span::Column;
+
+    #[test]
+    fn byte_in_str_utf16() {
+        use super::byte_in_str_utf16;
+
+        assert_eq!(
+            '😢'.len_utf8(),
+            byte_in_str_utf16("😢a", Column::new_zero_indexed('😢'.len_utf16() as u32)).unwrap()
+        );
+
+        // 😢 is represented by 2 u16s - we can't index in the middle of a character
+        assert!(byte_in_str_utf16("😢", Column::new_zero_indexed(1)).is_err());
     }
 }
