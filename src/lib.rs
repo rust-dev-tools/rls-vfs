@@ -1,6 +1,8 @@
 #![feature(type_ascription)]
 
 extern crate rls_span as span;
+#[macro_use]
+extern crate log;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -292,6 +294,7 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
     }
 
     fn on_changes(&self, changes: &[Change]) -> Result<(), Error> {
+        trace!("on_changes: {:?}", changes);
         for (file_name, changes) in coalesce_changes(changes) {
             let path = Path::new(file_name);
             {
@@ -652,7 +655,9 @@ impl<U> File<U> {
 
 impl TextFile {
     fn make_change(&mut self, changes: &[&Change]) -> Result<(), Error> {
+        trace!("TextFile::make_change");
         for c in changes {
+            trace!("TextFile::make_change: {:?}", c);
             let new_text = match **c {
                 Change::ReplaceText {
                     ref span,

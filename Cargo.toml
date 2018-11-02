@@ -9,3 +9,4 @@ categories = ["development-tools"]
 
 [dependencies]
 rls-span = "0.4"
+log = "0.4.5"
