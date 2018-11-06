@@ -28,20 +28,50 @@ macro_rules! try_opt_loc {
 
 pub struct Vfs<U = ()>(VfsInternal<RealFileLoader, U>);
 
-type Span = span::Span<span::ZeroIndexed>;
-
-#[derive(Debug)]
-/// Defines a smallest text unit that `Span`s operate with.
-pub enum SpanAtom {
-    /// `char` primitive
-    UnicodeScalarValue,
-    /// `u16` component in UTF-16 encoding
-    Utf16CodeUnit
+/// Span of the text to be replaced defined in col/row terms.
+#[derive(Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SpanData {
+    /// Span of the text defined in col/row terms.
+    pub span: span::Span<span::ZeroIndexed>,
+    /// Length in chars of the text. If present,
+    /// used to calculate replacement range instead of
+    /// span's row_end/col_end fields. Needed for editors that
+    /// can't properly calculate the latter fields.
+    /// Span's row_start/col_start are still assumed valid.
+    pub len: Option<u64>,
 }
 
-impl Default for SpanAtom {
-    fn default() -> Self {
-        SpanAtom::UnicodeScalarValue
+/// Span of text that VFS can operate with.
+#[derive(Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub enum VfsSpan {
+    /// Span with offsets based on unicode scalar values.
+    UnicodeScalarValue(SpanData),
+    /// Span with offsets based on UTF-16 code units.
+    Utf16CodeUnit(SpanData),
+}
+
+impl VfsSpan {
+    pub fn from_usv(span: span::Span<span::ZeroIndexed>, len: Option<u64>) -> VfsSpan {
+        VfsSpan::UnicodeScalarValue(SpanData { span, len })
+    }
+
+    pub fn from_utf16(span: span::Span<span::ZeroIndexed>, len: Option<u64>) -> VfsSpan {
+        VfsSpan::Utf16CodeUnit(SpanData { span, len })
+    }
+
+    fn as_inner(&self) -> &SpanData {
+        match self {
+            VfsSpan::UnicodeScalarValue(span) => span,
+            VfsSpan::Utf16CodeUnit(span) => span,
+        }
+    }
+
+    pub fn span(&self) -> &span::Span<span::ZeroIndexed> {
+        &self.as_inner().span
+    }
+
+    pub fn len(&self) -> Option<u64> {
+        self.as_inner().len
     }
 }
 
@@ -51,19 +81,8 @@ pub enum Change {
     AddFile { file: PathBuf, text: String },
     /// Changes in-memory contents of the previously added file.
     ReplaceText {
-        /// Span of the text to be replaced defined in col/row terms.
-        span: Span,
-        /// Length in chars of the text to be replaced. If present,
-        /// used to calculate replacement range instead of
-        /// span's row_end/col_end fields. Needed for editors that
-        /// can't properly calculate the latter fields.
-        /// Span's row_start/col_start are still assumed valid.
-        len: Option<u64>,
-        /// Specifies the atom units used by `span` and `len`.
-        /// For example, a buffer of "😢" has a column span of 0 to 1 and length
-        /// equal to 1 with `SpanAtom::UnicodeScalarValue` but a column span
-        /// of 0 to 2 and length equal to 2 with `SpanAtom::Utf16CodeUnit`.
-        atom: SpanAtom,
+        /// Span of the text to be replaced.
+        span: VfsSpan,
         /// Text to replace specified text range with.
         text: String,
     },
@@ -73,7 +92,7 @@ impl Change {
     fn file(&self) -> &Path {
         match *self {
             Change::AddFile { ref file, .. } => file.as_ref(),
-            Change::ReplaceText { ref span, .. } => span.file.as_ref(),
+            Change::ReplaceText { ref span, .. } => span.span().file.as_ref(),
         }
     }
 }
@@ -681,21 +700,20 @@ impl TextFile {
             let new_text = match **c {
                 Change::ReplaceText {
                     ref span,
-                    ref len,
                     ref text,
-                    ref atom,
                 } => {
-                    let byte_in_str = match atom {
-                        SpanAtom::UnicodeScalarValue => byte_in_str,
-                        SpanAtom::Utf16CodeUnit => byte_in_str_utf16,
+                    let byte_in_str = match span {
+                        VfsSpan::UnicodeScalarValue(..) => byte_in_str,
+                        VfsSpan::Utf16CodeUnit(..) => byte_in_str_utf16,
                     };
+                    let (span, len) = (span.span(), span.len());
 
                     let range = {
                         let first_line = self.load_line(span.range.row_start)?;
                         let byte_start = self.line_indices[span.range.row_start.0 as usize]
                             + byte_in_str(first_line, span.range.col_start)? as u32;
 
-                        let byte_end = if let &Some(len) = len {
+                        let byte_end = if let Some(len) = len {
                             // if `len` exists, the replaced portion of text
                             // is `len` chars starting from row_start/col_start.
                             byte_start + byte_in_str(
