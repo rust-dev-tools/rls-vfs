@@ -59,6 +59,14 @@ impl VfsSpan {
         VfsSpan::Utf16CodeUnit(SpanData { span, len })
     }
 
+    /// Return a UTF-8 byte offset in `s` for a given text unit offset.
+    pub fn byte_in_str(&self, s: &str, c: span::Column<span::ZeroIndexed>) -> Result<usize, Error> {
+        match self {
+            VfsSpan::UnicodeScalarValue(..) => byte_in_str(s, c),
+            VfsSpan::Utf16CodeUnit(..) => byte_in_str_utf16(s, c),
+        }
+    }
+
     fn as_inner(&self) -> &SpanData {
         match self {
             VfsSpan::UnicodeScalarValue(span) => span,
@@ -699,24 +707,20 @@ impl TextFile {
             trace!("TextFile::make_change: {:?}", c);
             let new_text = match **c {
                 Change::ReplaceText {
-                    ref span,
+                    span: ref vfs_span,
                     ref text,
                 } => {
-                    let byte_in_str = match span {
-                        VfsSpan::UnicodeScalarValue(..) => byte_in_str,
-                        VfsSpan::Utf16CodeUnit(..) => byte_in_str_utf16,
-                    };
-                    let (span, len) = (span.span(), span.len());
+                    let (span, len) = (vfs_span.span(), vfs_span.len());
 
                     let range = {
                         let first_line = self.load_line(span.range.row_start)?;
                         let byte_start = self.line_indices[span.range.row_start.0 as usize]
-                            + byte_in_str(first_line, span.range.col_start)? as u32;
+                            + vfs_span.byte_in_str(first_line, span.range.col_start)? as u32;
 
                         let byte_end = if let Some(len) = len {
                             // if `len` exists, the replaced portion of text
                             // is `len` chars starting from row_start/col_start.
-                            byte_start + byte_in_str(
+                            byte_start + vfs_span.byte_in_str(
                                 &self.text[byte_start as usize..],
                                 span::Column::new_zero_indexed(len as u32),
                             )? as u32
@@ -725,7 +729,7 @@ impl TextFile {
                             // for determining the tail end of replaced text.
                             let last_line = self.load_line(span.range.row_end)?;
                             self.line_indices[span.range.row_end.0 as usize]
-                                + byte_in_str(last_line, span.range.col_end)? as u32
+                                + vfs_span.byte_in_str(last_line, span.range.col_end)? as u32
                         };
 
                         (byte_start, byte_end)
