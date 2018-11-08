@@ -1,8 +1,13 @@
-use super::{VfsInternal, Change, FileLoader, File, FileKind, FileContents,
-            Error, TextFile, make_line_indices};
-use Span;
-use span::{Row, Column};
 use std::path::{Path, PathBuf};
+
+use span::{self, Column, Position, Row};
+
+use super::{
+    make_line_indices, Change, Error, File, FileContents, FileKind, FileLoader, TextFile,
+    VfsInternal, VfsSpan
+};
+
+type Span = span::Span<span::ZeroIndexed>;
 
 struct MockFileLoader;
 
@@ -41,14 +46,16 @@ fn make_change(with_len: bool) -> Change {
         (1, 4, None)
     };
     Change::ReplaceText {
-        span: Span::new(
-            Row::new_zero_indexed(1),
-            Row::new_zero_indexed(row_end),
-            Column::new_zero_indexed(1),
-            Column::new_zero_indexed(col_end),
-            "foo",
+        span: VfsSpan::from_usv(
+            Span::new(
+                Row::new_zero_indexed(1),
+                Row::new_zero_indexed(row_end),
+                Column::new_zero_indexed(1),
+                Column::new_zero_indexed(col_end),
+                "foo",
+            ),
+            len,
         ),
-        len: len,
         text: "foo".to_owned(),
     }
 }
@@ -62,14 +69,16 @@ fn make_change_2(with_len: bool) -> Change {
         (3, 2, None)
     };
     Change::ReplaceText {
-        span: Span::new(
-            Row::new_zero_indexed(2),
-            Row::new_zero_indexed(row_end),
-            Column::new_zero_indexed(4),
-            Column::new_zero_indexed(col_end),
-            "foo",
+        span: VfsSpan::from_usv(
+            Span::new(
+                Row::new_zero_indexed(2),
+                Row::new_zero_indexed(row_end),
+                Column::new_zero_indexed(4),
+                Column::new_zero_indexed(col_end),
+                "foo",
+            ),
+            len,
         ),
-        len: len,
         text: "aye carumba".to_owned(),
     }
 }
@@ -304,4 +313,60 @@ fn test_clear() {
     assert!(vfs.get_cached_files().is_empty());
 }
 
-// TODO test with wide chars
+#[test]
+fn test_wide_utf8() {
+    let vfs = VfsInternal::<MockFileLoader, ()>::new();
+    let changes = [
+        Change::AddFile {
+            file: PathBuf::from("foo"),
+            text: String::from("😢"),
+        },
+        Change::ReplaceText {
+            span: VfsSpan::from_usv(
+                Span::from_positions(
+                    Position::new(Row::new_zero_indexed(0), Column::new_zero_indexed(0)),
+                    Position::new(Row::new_zero_indexed(0), Column::new_zero_indexed(1)),
+                    "foo",
+                ),
+                Some(1),
+            ),
+            text: "".into(),
+        },
+    ];
+
+    vfs.on_changes(&changes).unwrap();
+
+    assert_eq!(
+        vfs.load_file(&Path::new("foo")).unwrap(),
+        FileContents::Text("".to_owned()),
+    );
+}
+
+#[test]
+fn test_wide_utf16() {
+    let vfs = VfsInternal::<MockFileLoader, ()>::new();
+    let changes = [
+        Change::AddFile {
+            file: PathBuf::from("foo"),
+            text: String::from("😢"),
+        },
+        Change::ReplaceText {
+            span: VfsSpan::from_utf16(
+                Span::from_positions(
+                    Position::new(Row::new_zero_indexed(0), Column::new_zero_indexed(0)),
+                    Position::new(Row::new_zero_indexed(0), Column::new_zero_indexed(2)),
+                    "foo",
+                ),
+                Some(2),
+            ),
+            text: "".into(),
+        },
+    ];
+
+    vfs.on_changes(&changes).unwrap();
+
+    assert_eq!(
+        vfs.load_file(&Path::new("foo")).unwrap(),
+        FileContents::Text("".to_owned()),
+    );
+}
