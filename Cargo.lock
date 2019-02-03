@@ -20,7 +20,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "rls-vfs"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "rls-span 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
