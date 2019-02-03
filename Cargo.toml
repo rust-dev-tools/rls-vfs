@@ -4,7 +4,7 @@ version = "0.7.0"
 authors = ["Nick Cameron <ncameron@mozilla.com>"]
 description = "Virtual File System for the RLS"
 license = "Apache-2.0/MIT"
-repository = "https://github.com/nrc/rls-vfs"
+repository = "https://github.com/rust-dev-tools/rls-vfs"
 categories = ["development-tools"]
 
 [dependencies]
